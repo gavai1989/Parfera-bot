@@ -230,7 +230,10 @@ async def consultant(callback: CallbackQuery):
 async def main():
     bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     try:
-        await dp.start_polling(bot)
+        # Render may leave an old webhook from a previous deployment.
+        # Remove it before switching this bot to long polling.
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot, drop_pending_updates=True)
     finally:
         await bot.session.close()
 
