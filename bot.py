@@ -1,6 +1,9 @@
-import os, json, asyncio
+import os
+import json
+import asyncio
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Update
 from aiogram.filters import CommandStart
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -14,6 +17,7 @@ with open("catalog.json", encoding="utf-8") as f:
 
 dp = Dispatcher()
 
+
 def home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog"),
@@ -24,6 +28,7 @@ def home_kb():
          InlineKeyboardButton(text="👤 Консультант", callback_data="consultant")]
     ])
 
+
 @dp.message(CommandStart())
 async def start(message: Message):
     await message.answer(
@@ -31,77 +36,134 @@ async def start(message: Message):
         reply_markup=home_kb()
     )
 
+
 @dp.callback_query(F.data == "catalog")
 async def catalog(callback: CallbackQuery):
-    brands=list(dict.fromkeys(p["brand"] for p in PRODUCTS))
-    kb=[[InlineKeyboardButton(text=b,callback_data=f"brand:{i}")] for i,b in enumerate(brands)]
-    kb.append([InlineKeyboardButton(text="← Главное меню",callback_data="home")])
-    await callback.message.edit_text("Выберите бренд:",reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    brands = list(dict.fromkeys(p["brand"] for p in PRODUCTS))
+    kb = [[InlineKeyboardButton(text=b, callback_data=f"brand:{i}")] for i, b in enumerate(brands)]
+    kb.append([InlineKeyboardButton(text="← Главное меню", callback_data="home")])
+    await callback.message.edit_text("Выберите бренд:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
+
 
 @dp.callback_query(F.data.startswith("brand:"))
 async def brand(callback: CallbackQuery):
-    brands=list(dict.fromkeys(p["brand"] for p in PRODUCTS))
-    b=brands[int(callback.data.split(":")[1])]
-    ps=[p for p in PRODUCTS if p["brand"]==b]
-    kb=[]
-    for p in ps:
-        prices=[]
-        if p["bottle_price_rub"]: prices.append(f'флакон {p["bottle_price_rub"]:,} ₽'.replace(","," "))
-        if p["tester_price_rub"]: prices.append(f'тестер {p["tester_price_rub"]:,} ₽'.replace(","," "))
-        kb.append([InlineKeyboardButton(text=f'{p["name"]} · {p["volume"]}',callback_data=f'product:{p["id"]}')])
-    kb.append([InlineKeyboardButton(text="← Бренды",callback_data="catalog")])
-    await callback.message.edit_text(f"<b>{b}</b>\n\nВыберите аромат:",reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    brands = list(dict.fromkeys(p["brand"] for p in PRODUCTS))
+    b = brands[int(callback.data.split(":")[1])]
+    ps = [p for p in PRODUCTS if p["brand"] == b]
+    kb = [[InlineKeyboardButton(text=f'{p["name"]} · {p["volume"]}', callback_data=f'product:{p["id"]}')] for p in ps]
+    kb.append([InlineKeyboardButton(text="← Бренды", callback_data="catalog")])
+    await callback.message.edit_text(f"<b>{b}</b>\n\nВыберите аромат:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
+
 
 @dp.callback_query(F.data.startswith("product:"))
 async def product(callback: CallbackQuery):
-    p=next(x for x in PRODUCTS if x["id"]==callback.data.split(":")[1])
-    lines=[f'<b>{p["brand"]}</b>',f'<b>{p["name"]}</b>',p["volume"],""]
-    if p["bottle_price_rub"]: lines.append(f'Флакон — <b>{p["bottle_price_rub"]:,} ₽</b>'.replace(","," "))
-    if p["tester_price_rub"]: lines.append(f'Тестер — <b>{p["tester_price_rub"]:,} ₽</b>'.replace(","," "))
-    kb=[[InlineKeyboardButton(text="🛒 Добавить",callback_data=f'add:{p["id"]}')],
-        [InlineKeyboardButton(text="← К бренду",callback_data=f'brand:{list(dict.fromkeys(x["brand"] for x in PRODUCTS)).index(p["brand"])}')]]
-    await callback.message.edit_text("\n".join(lines),reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    p = next(x for x in PRODUCTS if x["id"] == callback.data.split(":")[1])
+    lines = [f'<b>{p["brand"]}</b>', f'<b>{p["name"]}</b>', p["volume"], ""]
+    if p["bottle_price_rub"]:
+        lines.append(f'Флакон — <b>{p["bottle_price_rub"]:,} ₽</b>'.replace(",", " "))
+    if p["tester_price_rub"]:
+        lines.append(f'Тестер — <b>{p["tester_price_rub"]:,} ₽</b>'.replace(",", " "))
+    kb = [
+        [InlineKeyboardButton(text="🛒 Добавить", callback_data=f'add:{p["id"]}')],
+        [InlineKeyboardButton(text="← К бренду", callback_data=f'brand:{list(dict.fromkeys(x["brand"] for x in PRODUCTS)).index(p["brand"])}')]
+    ]
+    await callback.message.edit_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
+
 
 @dp.callback_query(F.data == "home")
 async def home(callback: CallbackQuery):
-    await callback.message.edit_text("PARFERA\n\nНишевая парфюмерия и персональный подбор.",reply_markup=home_kb())
+    await callback.message.edit_text("PARFERA\n\nНишевая парфюмерия и персональный подбор.", reply_markup=home_kb())
     await callback.answer()
+
 
 @dp.callback_query(F.data == "search")
 async def search(callback: CallbackQuery):
-    await callback.message.edit_text("🔎 Поиск\n\nВ следующей версии добавим поиск по всему каталогу.",reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню",callback_data="home")]]))
+    await callback.message.edit_text("🔎 Поиск\n\nВ следующей версии добавим поиск по всему каталогу.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
     await callback.answer()
+
 
 @dp.callback_query(F.data == "popular")
 async def popular(callback: CallbackQuery):
-    await callback.message.edit_text("⭐ Популярное\n\nПодключим после первичного теста.",reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню",callback_data="home")]]))
+    await callback.message.edit_text("⭐ Популярное\n\nПодключим после первичного теста.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
     await callback.answer()
+
 
 @dp.callback_query(F.data == "new")
 async def new(callback: CallbackQuery):
-    await callback.message.edit_text("🆕 Новинки\n\nПодключим после первичного теста.",reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню",callback_data="home")]]))
+    await callback.message.edit_text("🆕 Новинки\n\nПодключим после первичного теста.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
     await callback.answer()
+
 
 @dp.callback_query(F.data == "cart")
 async def cart(callback: CallbackQuery):
-    await callback.message.edit_text("🛒 Корзина\n\nТестовый раздел. Полноценную корзину подключим следующим этапом.",reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню",callback_data="home")]]))
+    await callback.message.edit_text("🛒 Корзина\n\nТестовый раздел. Полноценную корзину подключим следующим этапом.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
     await callback.answer()
+
 
 @dp.callback_query(F.data == "consultant")
 async def consultant(callback: CallbackQuery):
-    await callback.message.edit_text("👤 Консультант\n\nНапишите, какой аромат ищете, и мы подберём варианты.",reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню",callback_data="home")]]))
+    await callback.message.edit_text("👤 Консультант\n\nНапишите, какой аромат ищете, и мы подберём варианты.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
     await callback.answer()
+
 
 @dp.callback_query(F.data.startswith("add:"))
 async def add(callback: CallbackQuery):
-    await callback.answer("Товар добавлен в тестовую корзину",show_alert=True)
+    await callback.answer("Товар добавлен в тестовую корзину", show_alert=True)
+
+
+async def health(request: web.Request):
+    return web.Response(text="OK")
+
+
+async def webhook(request: web.Request):
+    try:
+        data = await request.json()
+        update = Update.model_validate(data)
+        await dp.feed_update(request.app["bot"], update)
+        return web.Response(text="OK")
+    except Exception as exc:
+        print(f"Webhook error: {exc}")
+        return web.Response(status=500, text="Webhook error")
+
+
+async def run_web_server(bot: Bot):
+    app = web.Application()
+    app["bot"] = bot
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+    app.router.add_post("/telegram-webhook", webhook)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", "10000"))
+    await web.TCPSite(runner, "0.0.0.0", port).start()
+    return runner
+
 
 async def main():
-    bot=Bot(TOKEN,default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    await dp.start_polling(bot)
+    bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    runner = await run_web_server(bot)
+    external_url = os.getenv("RENDER_EXTERNAL_URL")
+    try:
+        if external_url:
+            webhook_url = external_url.rstrip("/") + "/telegram-webhook"
+            await bot.set_webhook(webhook_url, drop_pending_updates=True)
+            print(f"Webhook enabled: {webhook_url}")
+            await asyncio.Event().wait()
+        else:
+            print("Local mode: polling")
+            await dp.start_polling(bot)
+    finally:
+        if external_url:
+            try:
+                await bot.delete_webhook()
+            except Exception:
+                pass
+        await runner.cleanup()
+        await bot.session.close()
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     asyncio.run(main())
