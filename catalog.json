@@ -1,0 +1,907 @@
+{
+  "currency": "RUB",
+  "exchange_rate": 90,
+  "source_note": "Свежий прайс от 08.09.2026. Закупочная цена × курс 90.",
+  "products": [
+    {
+      "id": "P0001",
+      "brand": "100 BON",
+      "name": "AMBRE SENSUEL edt",
+      "volume": "50 мл",
+      "bottle_price_rub": 2349,
+      "tester_price_rub": 1287,
+      "article": "000-002"
+    },
+    {
+      "id": "P0002",
+      "brand": "100 BON",
+      "name": "EAU DE THE & GINGEMBRE edp",
+      "volume": "50 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 1287,
+      "article": "04-9934"
+    },
+    {
+      "id": "P0003",
+      "brand": "100 BON",
+      "name": "GLAM FLOWER edt",
+      "volume": "50 мл",
+      "bottle_price_rub": 1566,
+      "tester_price_rub": 1287,
+      "article": "04-1761"
+    },
+    {
+      "id": "P0004",
+      "brand": "100 BON",
+      "name": "MIRAGE DU DESERT edt",
+      "volume": "50 мл",
+      "bottle_price_rub": 2349,
+      "tester_price_rub": 1287,
+      "article": "000-004"
+    },
+    {
+      "id": "P0005",
+      "brand": "100 BON",
+      "name": "NAGARANGA & SANTAL CITRONNE edp",
+      "volume": "50 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 1287,
+      "article": "04-9933"
+    },
+    {
+      "id": "P0006",
+      "brand": "100 BON",
+      "name": "SECRET GARDEN edt",
+      "volume": "50 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 1287,
+      "article": "04-1770"
+    },
+    {
+      "id": "P0007",
+      "brand": "100 BON",
+      "name": "SOLEIL & AMBRE edt",
+      "volume": "50 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 1287,
+      "article": "04-1785"
+    },
+    {
+      "id": "P0008",
+      "brand": "100 BON",
+      "name": "SUN & AMBER edt",
+      "volume": "50 мл",
+      "bottle_price_rub": 2349,
+      "tester_price_rub": null,
+      "article": "036-729"
+    },
+    {
+      "id": "P0009",
+      "brand": "100 BON",
+      "name": "WOOD & POWDER edP",
+      "volume": "50 мл",
+      "bottle_price_rub": 2349,
+      "tester_price_rub": null,
+      "article": "036-731"
+    },
+    {
+      "id": "P0010",
+      "brand": "12",
+      "name": "PARFUMEURS EMPEREUR parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 12429,
+      "tester_price_rub": null,
+      "article": "05-2017"
+    },
+    {
+      "id": "P0011",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "AMBOISE (m) parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": 15957,
+      "tester_price_rub": null,
+      "article": "000-009"
+    },
+    {
+      "id": "P0012",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "BAGATELLE eau de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 19656,
+      "article": "000-014"
+    },
+    {
+      "id": "P0013",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "BRISSAC eau de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": 17784,
+      "tester_price_rub": 17316,
+      "article": "000-016"
+    },
+    {
+      "id": "P0014",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "CHAUMONT SUR LOIRE eau de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": 17784,
+      "tester_price_rub": null,
+      "article": "000-020"
+    },
+    {
+      "id": "P0015",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "CHENONCEAU (w) eau de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 24327,
+      "article": "038-182"
+    },
+    {
+      "id": "P0016",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "CONCIERGERIE eau de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": 10494,
+      "tester_price_rub": null,
+      "article": "000-021"
+    },
+    {
+      "id": "P0017",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "CONCIERGERIE parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": 12339,
+      "tester_price_rub": 11142,
+      "article": "036-660"
+    },
+    {
+      "id": "P0018",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "COURANCES Extrait de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": 12429,
+      "tester_price_rub": null,
+      "article": "036-743"
+    },
+    {
+      "id": "P0019",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "FONTAINEBLEAU Extrait de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": 14148,
+      "tester_price_rub": 12978,
+      "article": "000-024"
+    },
+    {
+      "id": "P0020",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "FONTAINEBLEAU Extrait de parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": 9756,
+      "tester_price_rub": null,
+      "article": "04-3628"
+    },
+    {
+      "id": "P0021",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "GIZEAUX eau de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": 17784,
+      "tester_price_rub": null,
+      "article": "000-028"
+    },
+    {
+      "id": "P0022",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "INTRIGUE DE L'AMOUR (w) eau de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": 12609,
+      "tester_price_rub": 12339,
+      "article": "000-030"
+    },
+    {
+      "id": "P0023",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "INTRIGUE DE L'AMOUR (w) eau de parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 14157,
+      "article": "04-4734"
+    },
+    {
+      "id": "P0024",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "INTRIGUES DES HOMMES (m) eau de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 10953,
+      "article": "000-033"
+    },
+    {
+      "id": "P0025",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LA BALLUE edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 14967,
+      "tester_price_rub": null,
+      "article": "000-036"
+    },
+    {
+      "id": "P0026",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LA DESTINEE (w) parfume",
+      "volume": "50 мл",
+      "bottle_price_rub": 12339,
+      "tester_price_rub": 11880,
+      "article": "000-038"
+    },
+    {
+      "id": "P0027",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LA MAISON DE MUSQUEE CLARY SAGE Parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": 15507,
+      "tester_price_rub": null,
+      "article": "05-3385"
+    },
+    {
+      "id": "P0028",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LA MAISON DE MUSQUEE ELEMI ENIGMA Parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": 15507,
+      "tester_price_rub": null,
+      "article": "05-3386"
+    },
+    {
+      "id": "P0029",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LA MAISON DE MUSQUEE IRIDESSE Parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": 15507,
+      "tester_price_rub": null,
+      "article": "05-3387"
+    },
+    {
+      "id": "P0030",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LA MAISON DE MUSQUEE RHUM PRIVE Parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": 15507,
+      "tester_price_rub": null,
+      "article": "05-3388"
+    },
+    {
+      "id": "P0031",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LA MAISON DE MUSQUEE ROYAL NECTAR Parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": 15507,
+      "tester_price_rub": null,
+      "article": "06-0566"
+    },
+    {
+      "id": "P0032",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LA MAISON DE MUSQUEE ROYAL SPICY Parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": 15507,
+      "tester_price_rub": null,
+      "article": "06-0565"
+    },
+    {
+      "id": "P0033",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LE BIEN AIME (w) parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 11322,
+      "tester_price_rub": 10494,
+      "article": "000-043"
+    },
+    {
+      "id": "P0034",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LE CHARME (w) eau de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": 11421,
+      "tester_price_rub": 10953,
+      "article": "000-046"
+    },
+    {
+      "id": "P0035",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LE CHARMEUR (m) eau de parfum",
+      "volume": "100 мл",
+      "bottle_price_rub": 11421,
+      "tester_price_rub": 10953,
+      "article": "000-048"
+    },
+    {
+      "id": "P0036",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LE FANTOME (m) Extrait De Parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": 9756,
+      "tester_price_rub": null,
+      "article": "036-740"
+    },
+    {
+      "id": "P0037",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LE ROI LOUIS XIV (w) parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 10953,
+      "tester_price_rub": null,
+      "article": "000-054"
+    },
+    {
+      "id": "P0038",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LE ROI PRUDENT (m) parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 11232,
+      "tester_price_rub": 10953,
+      "article": "000-056"
+    },
+    {
+      "id": "P0039",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LE ROI SOLEIL (m) parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 15507,
+      "tester_price_rub": null,
+      "article": "000-058"
+    },
+    {
+      "id": "P0040",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LUXEMBOURG edp (m)",
+      "volume": "100 мл",
+      "bottle_price_rub": 12978,
+      "tester_price_rub": 14517,
+      "article": "000-060"
+    },
+    {
+      "id": "P0041",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "LUXEMBOURG Extrait De Parfum (m)",
+      "volume": "50 мл",
+      "bottle_price_rub": 9756,
+      "tester_price_rub": null,
+      "article": "000-059"
+    },
+    {
+      "id": "P0042",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MA REINE edp (w)",
+      "volume": "100 мл",
+      "bottle_price_rub": 11880,
+      "tester_price_rub": 11421,
+      "article": "000-062"
+    },
+    {
+      "id": "P0043",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MADAM LA REINE (w) parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 10773,
+      "tester_price_rub": null,
+      "article": "000-064"
+    },
+    {
+      "id": "P0044",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MALMAISON parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 12834,
+      "tester_price_rub": 13248,
+      "article": "000-067"
+    },
+    {
+      "id": "P0045",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MALMAISON Extrait De Parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": 9882,
+      "tester_price_rub": 10953,
+      "article": "000-069"
+    },
+    {
+      "id": "P0046",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MARIE DE MEDICIS parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 12726,
+      "tester_price_rub": 13248,
+      "article": "000-073"
+    },
+    {
+      "id": "P0047",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MARIE DE MEDICIS Extrait De Parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": 10035,
+      "tester_price_rub": null,
+      "article": "000-075"
+    },
+    {
+      "id": "P0048",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MARQUEYSSAC (w) parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 12663,
+      "tester_price_rub": 13248,
+      "article": "000-079"
+    },
+    {
+      "id": "P0049",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MARQUEYSSAC (w) Extrait De Parfum",
+      "volume": "50 мл",
+      "bottle_price_rub": 10035,
+      "tester_price_rub": null,
+      "article": "000-080"
+    },
+    {
+      "id": "P0050",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MARQUISE DE MAINTENON (w) parfume",
+      "volume": "50 мл",
+      "bottle_price_rub": 8280,
+      "tester_price_rub": null,
+      "article": "05-6163"
+    },
+    {
+      "id": "P0051",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MON ROI edp (m)",
+      "volume": "100 мл",
+      "bottle_price_rub": 16848,
+      "tester_price_rub": null,
+      "article": "000-087"
+    },
+    {
+      "id": "P0052",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MONBAZILLAC (w) parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 17784,
+      "tester_price_rub": null,
+      "article": "036-746"
+    },
+    {
+      "id": "P0053",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "MONTRESOR (w) parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 12195,
+      "tester_price_rub": 12339,
+      "article": "000-089"
+    },
+    {
+      "id": "P0054",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "PALAIS ROYAL edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 23400,
+      "tester_price_rub": null,
+      "article": "000-091"
+    },
+    {
+      "id": "P0055",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "POTAGER DU ROI edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 23400,
+      "tester_price_rub": null,
+      "article": "000-093"
+    },
+    {
+      "id": "P0056",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "PRINCESSE DE SAVOIE (w) parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": 13977,
+      "tester_price_rub": 14157,
+      "article": "000-095"
+    },
+    {
+      "id": "P0057",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "SAINT CLOUD edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 23400,
+      "tester_price_rub": null,
+      "article": "000-097"
+    },
+    {
+      "id": "P0058",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "SECRET DE L'AMOUR edp (w)",
+      "volume": "100 мл",
+      "bottle_price_rub": 11421,
+      "tester_price_rub": 10953,
+      "article": "000-098"
+    },
+    {
+      "id": "P0059",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "SECRETS DES HOMMES edp (m)",
+      "volume": "100 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 10494,
+      "article": "000-101"
+    },
+    {
+      "id": "P0060",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "VANILLA IMPERIAL Extrait De Parfum parfume",
+      "volume": "50 мл",
+      "bottle_price_rub": 8838,
+      "tester_price_rub": null,
+      "article": "05-6165"
+    },
+    {
+      "id": "P0061",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "VAUX LE VICOMTE (m) parfume",
+      "volume": "100 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 12789,
+      "article": "000-103"
+    },
+    {
+      "id": "P0062",
+      "brand": "12 PARFUMEURS FRANCAIS",
+      "name": "ORIENTAL ROSE 50 Parfum",
+      "volume": "",
+      "bottle_price_rub": null,
+      "tester_price_rub": 11421,
+      "article": "038-183"
+    },
+    {
+      "id": "P0063",
+      "brand": "19-69",
+      "name": "CAPRI edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1339"
+    },
+    {
+      "id": "P0064",
+      "brand": "19-69",
+      "name": "CHRONIC BP Candle - парфюмированная свеча",
+      "volume": "200 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 1647,
+      "article": "04-3163"
+    },
+    {
+      "id": "P0065",
+      "brand": "19-69",
+      "name": "CHRONIC edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1340"
+    },
+    {
+      "id": "P0066",
+      "brand": "19-69",
+      "name": "FEMALE CHRIST edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1341"
+    },
+    {
+      "id": "P0067",
+      "brand": "19-69",
+      "name": "HIGHER PEACE edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1323"
+    },
+    {
+      "id": "P0068",
+      "brand": "19-69",
+      "name": "INVISIBLE POST BP Candle - парфюмированная свеча",
+      "volume": "200 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 1647,
+      "article": "04-3164"
+    },
+    {
+      "id": "P0069",
+      "brand": "19-69",
+      "name": "INVISIBLE POST edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1324"
+    },
+    {
+      "id": "P0070",
+      "brand": "19-69",
+      "name": "JUNE 28 edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1325"
+    },
+    {
+      "id": "P0071",
+      "brand": "19-69",
+      "name": "LA HABANA BP Candle - парфюмированная свеча",
+      "volume": "200 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 1647,
+      "article": "04-3165"
+    },
+    {
+      "id": "P0072",
+      "brand": "19-69",
+      "name": "LA HABANA edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1327"
+    },
+    {
+      "id": "P0073",
+      "brand": "19-69",
+      "name": "L'AIR BARBES edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1326"
+    },
+    {
+      "id": "P0074",
+      "brand": "19-69",
+      "name": "MIAMI BLUE BP Candle - парфюмированная свеча",
+      "volume": "200 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 1647,
+      "article": "04-3166"
+    },
+    {
+      "id": "P0075",
+      "brand": "19-69",
+      "name": "PURPLE HAZE Candle - парфюмированная свеча",
+      "volume": "200 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 1647,
+      "article": "04-3167"
+    },
+    {
+      "id": "P0076",
+      "brand": "19-69",
+      "name": "PURPLE HAZE edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1328"
+    },
+    {
+      "id": "P0077",
+      "brand": "19-69",
+      "name": "RAINBOW BAR Candle - парфюмированная свеча",
+      "volume": "200 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 1647,
+      "article": "04-3168"
+    },
+    {
+      "id": "P0078",
+      "brand": "19-69",
+      "name": "RAINBOW BAR edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1329"
+    },
+    {
+      "id": "P0079",
+      "brand": "19-69",
+      "name": "THE COLLECTION edp 7* (Higher Peace,Chinese Tobacco, Chronic, Villa Nellcote, Female Christ, Miami Blue,June 28)",
+      "volume": "2.5 мл",
+      "bottle_price_rub": 2160,
+      "tester_price_rub": null,
+      "article": "04-3550"
+    },
+    {
+      "id": "P0080",
+      "brand": "19-69",
+      "name": "THE COLLECTION edp 7* (Purple Haze, Capri, Kasbah, Rainbow Bar, Lair Barbes, Invisible Post,)",
+      "volume": "2.5 мл",
+      "bottle_price_rub": 2160,
+      "tester_price_rub": null,
+      "article": "04-3551"
+    },
+    {
+      "id": "P0081",
+      "brand": "19-69",
+      "name": "VILLA NELLCOTE Candle - парфюмированная свеча",
+      "volume": "200 мл",
+      "bottle_price_rub": null,
+      "tester_price_rub": 1647,
+      "article": "04-3169"
+    },
+    {
+      "id": "P0082",
+      "brand": "19-69",
+      "name": "VILLA NELLCOTE edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1330"
+    },
+    {
+      "id": "P0083",
+      "brand": "19-69",
+      "name": "YES PLEASE! edp",
+      "volume": "100 мл",
+      "bottle_price_rub": 6768,
+      "tester_price_rub": 5193,
+      "article": "04-1331"
+    },
+    {
+      "id": "P0084",
+      "brand": "27",
+      "name": "87 PERFUMES DISCOVERY KIT edp 10* пробник",
+      "volume": "2 мл",
+      "bottle_price_rub": 3969,
+      "tester_price_rub": null,
+      "article": "04-6394"
+    },
+    {
+      "id": "P0085",
+      "brand": "27",
+      "name": "87 PERFUMES ELIXIR DE BOMBE edp",
+      "volume": "27 мл",
+      "bottle_price_rub": 3879,
+      "tester_price_rub": null,
+      "article": "000-116"
+    },
+    {
+      "id": "P0086",
+      "brand": "27",
+      "name": "87 PERFUMES ELIXIR DE BOMBE edp",
+      "volume": "87 мл",
+      "bottle_price_rub": 6867,
+      "tester_price_rub": 6768,
+      "article": "000-118"
+    },
+    {
+      "id": "P0087",
+      "brand": "27",
+      "name": "87 PERFUMES FLANEUR edp",
+      "volume": "27 мл",
+      "bottle_price_rub": 2718,
+      "tester_price_rub": null,
+      "article": "000-120"
+    },
+    {
+      "id": "P0088",
+      "brand": "27",
+      "name": "87 PERFUMES FLANEUR edp",
+      "volume": "87 мл",
+      "bottle_price_rub": 4068,
+      "tester_price_rub": 5409,
+      "article": "000-122"
+    },
+    {
+      "id": "P0089",
+      "brand": "27",
+      "name": "87 PERFUMES GENETIC BLISS edp",
+      "volume": "27 мл",
+      "bottle_price_rub": 12015,
+      "tester_price_rub": null,
+      "article": "000-124"
+    },
+    {
+      "id": "P0090",
+      "brand": "27",
+      "name": "87 PERFUMES GENETIC BLISS edp пробник",
+      "volume": "2 мл",
+      "bottle_price_rub": 891,
+      "tester_price_rub": null,
+      "article": "000-125"
+    },
+    {
+      "id": "P0091",
+      "brand": "27",
+      "name": "87 PERFUMES GENETIC BLISS edp",
+      "volume": "87 мл",
+      "bottle_price_rub": 25164,
+      "tester_price_rub": 27567,
+      "article": "000-126"
+    },
+    {
+      "id": "P0092",
+      "brand": "27",
+      "name": "87 PERFUMES HAKUNA MATATA edp",
+      "volume": "27 мл",
+      "bottle_price_rub": 2394,
+      "tester_price_rub": 2997,
+      "article": "04-9249"
+    },
+    {
+      "id": "P0093",
+      "brand": "27",
+      "name": "87 PERFUMES HAKUNA MATATA edp пробник",
+      "volume": "2 мл",
+      "bottle_price_rub": 189,
+      "tester_price_rub": null,
+      "article": "04-9488"
+    },
+    {
+      "id": "P0094",
+      "brand": "27",
+      "name": "87 PERFUMES HAKUNA MATATA edp mini",
+      "volume": "7 мл",
+      "bottle_price_rub": 1476,
+      "tester_price_rub": null,
+      "article": "05-0376"
+    },
+    {
+      "id": "P0095",
+      "brand": "27",
+      "name": "87 PERFUMES HAKUNA MATATA edp",
+      "volume": "87 мл",
+      "bottle_price_rub": 5742,
+      "tester_price_rub": 5319,
+      "article": "04-9248"
+    },
+    {
+      "id": "P0096",
+      "brand": "27",
+      "name": "87 PERFUMES HAMACA edp",
+      "volume": "27 мл",
+      "bottle_price_rub": 3375,
+      "tester_price_rub": 4644,
+      "article": "000-128"
+    },
+    {
+      "id": "P0097",
+      "brand": "27",
+      "name": "87 PERFUMES HAMACA edp пробник",
+      "volume": "2 мл",
+      "bottle_price_rub": 576,
+      "tester_price_rub": null,
+      "article": "000-129"
+    },
+    {
+      "id": "P0098",
+      "brand": "27",
+      "name": "87 PERFUMES HAMACA edp",
+      "volume": "7 мл",
+      "bottle_price_rub": 1665,
+      "tester_price_rub": null,
+      "article": "000-130"
+    },
+    {
+      "id": "P0099",
+      "brand": "27",
+      "name": "87 PERFUMES HAMACA edp",
+      "volume": "87 мл",
+      "bottle_price_rub": 13707,
+      "tester_price_rub": 13248,
+      "article": "000-131"
+    },
+    {
+      "id": "P0100",
+      "brand": "27",
+      "name": "87 PERFUMES HASHTAG edp",
+      "volume": "27 мл",
+      "bottle_price_rub": 7281,
+      "tester_price_rub": null,
+      "article": "000-133"
+    }
+  ]
+}
