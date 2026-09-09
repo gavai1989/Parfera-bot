@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+from aiohttp import web
 import re
 from typing import Dict, List
 
@@ -227,14 +228,36 @@ async def consultant(callback: CallbackQuery):
     await callback.answer()
 
 
+async def health(request: web.Request):
+    return web.Response(text="OK")
+
+
+async def run_web_server():
+    app = web.Application()
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", "10000"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"HTTP server started on 0.0.0.0:{port}")
+    return runner
+
+
 async def main():
     bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    runner = None
     try:
-        # Render may leave an old webhook from a previous deployment.
+        # Render may leave an old Telegram webhook from a previous deployment.
         # Remove it before switching this bot to long polling.
         await bot.delete_webhook(drop_pending_updates=True)
+        runner = await run_web_server()
+        print("Starting Telegram long polling...")
         await dp.start_polling(bot, drop_pending_updates=True)
     finally:
+        if runner is not None:
+            await runner.cleanup()
         await bot.session.close()
 
 

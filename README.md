@@ -1,12 +1,24 @@
-# PARFERA — Telegram test shop v2
+# PARFERA — Telegram shop
 
-Каталог собран из свежего загруженного прайса.
-100 первых уникальных карточек, варианты флакон/тестер объединены.
-Цены: закупочная цена × 90.
+Render-ready version: full supplier catalog + search.
 
-Токен бота не хранится в проекте.
+- 29,434 supplier positions in `catalog.json`
+- Prices converted to RUB at supplier rate 90
+- Search by product name or article
+- 12 search results per page
+- Telegram webhook is removed automatically before long polling
+- HTTP `/health` endpoint listens on Render's `$PORT`
 
-Запуск:
-1. `pip install -r requirements.txt`
-2. Задать переменную окружения `PARFERA_BOT_TOKEN`
-3. `python bot.py`
+## Render
+
+Build command:
+`pip install -r requirements.txt`
+
+Start command:
+`python bot.py`
+
+Environment variable:
+`PARFERA_BOT_TOKEN`
+
+Optional Render Health Check Path:
+`/health`
