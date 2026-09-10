@@ -94,8 +94,9 @@ def back_home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню", callback_data="home")]])
 
 
-def product_group(pid):
-    p = BY_ID[pid]
+def product_group(item):
+    # Accept either a product id or an already loaded product dict.
+    p = BY_ID[item] if isinstance(item, str) else item
     return GROUPS.get(group_key(p), [p])
 
 
