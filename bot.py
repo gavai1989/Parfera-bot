@@ -34,16 +34,28 @@ def rub(value):
     return f"{int(value):,}".replace(",", " ") + " ₽"
 
 
+def clean_product_name(name: str) -> str:
+    """Human-friendly fragrance name for the Telegram shop."""
+    name = str(name or "").strip()
+    # Keep the supplier naming visible for now, as requested.
+    return re.sub(r"\s+", " ", name).strip(" -")
+
+
 def display_name(p):
-    name = p.get("name", "")
-    return re.sub(r"\s+TESTER$", "", name, flags=re.I)
+    return clean_product_name(p.get("name", ""))
 
 
 def group_key(p):
-    base = p.get("base_name") or p.get("name", "")
-    base = re.sub(r"\s+TESTER$", "", base, flags=re.I)
-    base = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml\b", "", base, count=1, flags=re.I)
-    return norm(base)
+    # Group one fragrance into one card. Volume, TESTER and supplier condition
+    # markers are variants, not separate fragrances. Concentration (EDT/EDP/EDP
+    # etc.) remains part of the key so genuinely different formulations do not merge.
+    name = str(p.get("base_name") or p.get("name", ""))
+    name = re.sub(r"\s+TESTER\b", "", name, flags=re.I)
+    name = re.sub(r"\s+(?:без крышки|с крышкой)\b", "", name, flags=re.I)
+    name = re.sub(r"\s+пробник\b", "", name, flags=re.I)
+    name = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml\b", "", name, flags=re.I)
+    name = re.sub(r"\s*\((?:m|w|u)\)\b", "", name, flags=re.I)
+    return norm(name)
 
 
 SEARCH_TEXT = {p["id"]: norm(f'{p.get("name", "")} {p.get("article", "")}') for p in PRODUCTS}
@@ -62,7 +74,26 @@ def sort_variants(items):
     def vol_num(p):
         m = re.search(r"(\d+(?:[.,]\d+)?)\s*ml", p.get("name", ""), re.I)
         return float(m.group(1).replace(",", ".")) if m else 9999
-    return sorted(items, key=lambda p: (vol_num(p), bool(p.get("tester")), p.get("name", "")))
+    def variant_order(p):
+        return 1 if p.get("tester") or p.get("tester_price_rub") else 0
+    return sorted(items, key=lambda p: (vol_num(p), variant_order(p), p.get("name", "")))
+
+
+def unique_variants(items):
+    """Remove duplicate supplier rows that have identical visible purchase options."""
+    out = []
+    seen = set()
+    for p in sort_variants(items):
+        vol = p.get("volume") or ""
+        b = p.get("bottle_price_rub")
+        t = p.get("tester_price_rub")
+        # Some supplier rows can repeat the same bottle/tester option.
+        key = (norm(vol), b, t, bool(p.get("tester")))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
 
 
 def lowest_group_price(items):
@@ -174,23 +205,49 @@ def product_group(item):
 
 def product_text(p):
     title = display_name(p)
-    title = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml.*$", "", title, flags=re.I)
-    lines = [f"<b>{title}</b>", "✨ Оригинальная парфюмерия", ""]
-    if "VERSACE EROS EDT" in display_name(p).upper():
+    raw = str(p.get("name", ""))
+    lines = [f"<b>{title}</b>", "✨ Оригинальная парфюмерия"]
+    # Keep supplier technical markers available, but present the main metadata
+    # in a compact premium-card style.
+    meta = []
+    m = re.search(r"\b(edp|edt|parfum|extrait)\b", raw, re.I)
+    if m:
+        meta.append(m.group(1).upper())
+    if re.search(r"\(m\)", raw, re.I):
+        meta.append("Мужской")
+    elif re.search(r"\(w\)", raw, re.I):
+        meta.append("Женский")
+    if meta:
+        lines.append(" · ".join(meta))
+    lines.append("")
+    if "VERSACE EROS EDT" in raw.upper():
         lines += ["Свежий, яркий и чувственный аромат с мятой, зелёным яблоком, лимоном, ванилью и древесными нотами.", ""]
+    else:
+        lines += ["Нишевая и оригинальная парфюмерия PARFERA.", ""]
     lines.append("<b>ВЫБЕРИТЕ ОБЪЁМ И ВАРИАНТ</b>")
     return "\n".join(lines)
 
 
 def product_kb(pid, brand_id=None, brand_page=0):
-    group = sort_variants(product_group(pid))
+    group = unique_variants(product_group(pid))
     rows = []
+    option_rows = []
     for p in group:
         vol = p.get("volume") or ""
+        options = []
         if p.get("bottle_price_rub"):
-            rows.append([InlineKeyboardButton(text=f"🧴 {vol} — {rub(p['bottle_price_rub'])}", callback_data=f"addv:{p['id']}:bottle")])
+            options.append(InlineKeyboardButton(text=f"🧴 {vol} — {rub(p['bottle_price_rub'])}", callback_data=f"addv:{p['id']}:bottle"))
         if p.get("tester_price_rub"):
-            rows.append([InlineKeyboardButton(text=f"🧪 {vol} · Тестер — {rub(p['tester_price_rub'])}", callback_data=f"addv:{p['id']}:tester")])
+            options.append(InlineKeyboardButton(text=f"🧪 {vol} · Тестер — {rub(p['tester_price_rub'])}", callback_data=f"addv:{p['id']}:tester"))
+        if options:
+            option_rows.append(options)
+    # Two-column selector on phones when there are many variants; long tester
+    # labels remain full-width for readability.
+    for opts in option_rows:
+        if len(opts) == 2 and all(len(x.text) <= 25 for x in opts):
+            rows.append(opts)
+        else:
+            rows.extend([[x] for x in opts])
     rows.append([InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")])
     if brand_id is None:
         bkey = BRAND_FOR_ID.get(pid)
@@ -206,7 +263,16 @@ def product_kb(pid, brand_id=None, brand_page=0):
 
 def search_results(query: str, page: int = 0):
     words = [w for w in norm(query).split() if w]
-    matches = [p for p in PRODUCTS if all(w in SEARCH_TEXT[p["id"]] for w in words)]
+    raw = [p for p in PRODUCTS if all(w in SEARCH_TEXT[p["id"]] for w in words)]
+    # Search results should also be fragrance cards, not supplier rows.
+    matches = []
+    seen = set()
+    for p in raw:
+        gk = group_key(p)
+        if gk in seen:
+            continue
+        seen.add(gk)
+        matches.append(p)
     start = page * PAGE_SIZE
     return matches, matches[start:start + PAGE_SIZE]
 
@@ -217,6 +283,9 @@ def results_kb(items: List[dict], page: int, total: int):
         title = display_name(p)
         if len(title) > 48:
             title = title[:45] + "…"
+        price = lowest_group_price(product_group(p))
+        if price:
+            title += f" · от {rub(price)}"
         rows.append([InlineKeyboardButton(text=title, callback_data=f'product:{p["id"]}')])
     nav = []
     if page > 0:
@@ -256,21 +325,21 @@ def brands_kb(page: int = 0):
 
 
 def brand_products_kb(brand_id: str, page: int = 0):
-    bkey = BRAND_ID_TO_KEY.get(str(brand_id))
-    groups = BRAND_GROUPS.get(bkey, []) if bkey else []
+    key = BRAND_ID_TO_KEY[brand_id]
+    groups = BRAND_GROUPS[key]
     total = len(groups)
     start = page * PAGE_SIZE
     items = groups[start:start + PAGE_SIZE]
     rows = []
     for group in items:
-        p = next((x for x in group if not x.get("tester") and x.get("bottle_price_rub")), group[0])
+        p = group[0]
         title = display_name(p)
-        title = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml.*$", "", title, flags=re.I)
+        if len(title) > 44:
+            title = title[:41] + "…"
         price = lowest_group_price(group)
-        label = title[:40] + ("…" if len(title) > 40 else "")
         if price:
-            label += f" · от {rub(price)}"
-        rows.append([InlineKeyboardButton(text=label, callback_data=f"product:{p['id']}:{brand_id}:{page}")])
+            title += f" · от {rub(price)}"
+        rows.append([InlineKeyboardButton(text=title, callback_data=f"product:{p['id']}:{brand_id}:{page}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"brand:{brand_id}:{page-1}"))
