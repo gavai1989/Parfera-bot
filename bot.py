@@ -68,7 +68,7 @@ def group_key(p):
 
 SEARCH_TEXT = {p["id"]: norm(f'{p.get("name", "")} {p.get("article", "")}') for p in PRODUCTS}
 BY_ID = {p["id"]: p for p in PRODUCTS}
-PAGE_SIZE = 10
+PAGE_SIZE = 6
 USER_SEARCH: Dict[int, str] = {}
 CARTS: Dict[int, List[dict]] = {}
 FAVORITES: Dict[int, set] = {}
@@ -353,6 +353,23 @@ def brands_kb(page: int = 0):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def product_meta(p):
+    raw = str(p.get("name", ""))
+    concentration = None
+    m = re.search(r"\b(edp|edt|parfum|extrait|eau de parfum|eau de toilette)\b", raw, re.I)
+    if m:
+        concentration = {
+            "edp": "Парфюмерная вода",
+            "edt": "Туалетная вода",
+            "parfum": "Парфюм",
+            "extrait": "Экстракт",
+            "eau de parfum": "Парфюмерная вода",
+            "eau de toilette": "Туалетная вода",
+        }.get(m.group(1).lower())
+    gender = "Мужские" if re.search(r"\(m\)", raw, re.I) else ("Женские" if re.search(r"\(w\)", raw, re.I) else None)
+    return " · ".join(x for x in (concentration, gender) if x)
+
+
 def brand_products_kb(brand_id: str, page: int = 0):
     key = BRAND_ID_TO_KEY[brand_id]
     groups = BRAND_GROUPS[key]
@@ -360,15 +377,24 @@ def brand_products_kb(brand_id: str, page: int = 0):
     start = page * PAGE_SIZE
     items = groups[start:start + PAGE_SIZE]
     rows = []
+
     for group in items:
-        p = group[0]
+        p = next((x for x in group if x.get("bottle_price_rub") or x.get("tester_price_rub")), group[0])
         title = display_name(p)
-        if len(title) > 44:
-            title = title[:41] + "…"
+        if len(title) > 38:
+            title = title[:35] + "…"
         price = lowest_group_price(group)
+        meta = product_meta(p)
+        lines = [title]
+        if meta:
+            lines.append(meta)
         if price:
-            title += f" · от {rub(price)}"
-        rows.append([InlineKeyboardButton(text=title, callback_data=f"product:{p['id']}:{brand_id}:{page}")])
+            lines.append(f"от {rub(price)}")
+        rows.append([InlineKeyboardButton(
+            text="\n".join(lines),
+            callback_data=f"product:{p['id']}:{brand_id}:{page}"
+        )])
+
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"brand:{brand_id}:{page-1}"))
@@ -376,11 +402,12 @@ def brand_products_kb(brand_id: str, page: int = 0):
         nav.append(InlineKeyboardButton(text="Далее →", callback_data=f"brand:{brand_id}:{page+1}"))
     if nav:
         rows.append(nav)
+
     rows += [
         [InlineKeyboardButton(text="← К брендам", callback_data="brands:0")],
         [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")],
-        [InlineKeyboardButton(text="🔎 Новый поиск", callback_data="search")],
-        [InlineKeyboardButton(text="← Главное меню", callback_data="home")]
+        [InlineKeyboardButton(text="⌕ Новый поиск", callback_data="search")],
+        [InlineKeyboardButton(text="▦ Главное меню", callback_data="home")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -481,7 +508,7 @@ async def brand_page(callback: CallbackQuery):
         return
     total = len(BRAND_GROUPS.get(key, []))
     title = BRAND_DISPLAY[key]
-    text = f"<b>{title}</b>\n\nАроматов: <b>{total}</b>\nВыберите аромат:"
+    text = f"<b>{title}</b>\n\nСмелость. Стиль. Характер.\n\nАроматов: <b>{total}</b>\nВыберите аромат:"
     await edit_or_replace(callback.message, text, brand_products_kb(brand_id, int(page)))
     await callback.answer()
 
