@@ -375,17 +375,26 @@ def brand_products_kb(brand_id: str, page: int = 0):
     items = groups[start:start + PAGE_SIZE]
     rows = []
     for group in items:
+        # Show a clean, customer-friendly 3-line catalog item:
+        # fragrance name / concentration / gender. Prices stay inside the product card.
         p = group[0]
         title = display_name(p)
         meta = product_meta(p)
+        concentration = None
+        gender = None
         if meta:
-            title += f" · {meta}"
-        price = lowest_group_price(group)
-        if price:
-            title += f" · от {rub(price)}"
-        if len(title) > 64:
-            title = title[:61] + "…"
-        rows.append([InlineKeyboardButton(text=title, callback_data=f"product:{p['id']}:{brand_id}:{page}")])
+            parts = [x.strip() for x in meta.split("·")]
+            concentration = parts[0] if parts else None
+            gender = parts[1] if len(parts) > 1 else None
+        lines = [title]
+        if concentration:
+            lines.append(concentration)
+        if gender:
+            lines.append(gender)
+        label = "\n".join(lines)
+        if len(label) > 64:
+            label = label[:61] + "…"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"product:{p['id']}:{brand_id}:{page}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"brand:{brand_id}:{page-1}"))
