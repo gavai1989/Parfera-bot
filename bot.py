@@ -20,12 +20,7 @@ if not TOKEN:
 with open("catalog.json", encoding="utf-8") as f:
     PRODUCTS = json.load(f)["products"]
 
-# Demo product photo for the first test card.
 VERSACE_EROS_IMAGE = os.path.join("images", "versace_eros_product.jpg")
-for p in PRODUCTS:
-    n = p.get("name", "").lower()
-    if "versace eros edt (m) 100ml" in n and "tester" not in n:
-        p["image_url"] = VERSACE_EROS_IMAGE
 
 
 def norm(text: str) -> str:
@@ -41,14 +36,10 @@ def rub(value):
 
 def display_name(p):
     name = p.get("name", "")
-    name = re.sub(r"\s+TESTER$", "", name, flags=re.I)
-    return name
+    return re.sub(r"\s+TESTER$", "", name, flags=re.I)
 
 
 def group_key(p):
-    """Group the same fragrance/concentration/gender across volumes and tester.
-    Gift sets remain separate variants because their extra contents stay in the key.
-    """
     base = p.get("base_name") or p.get("name", "")
     base = re.sub(r"\s+TESTER$", "", base, flags=re.I)
     base = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml\b", "", base, count=1, flags=re.I)
@@ -61,12 +52,94 @@ PAGE_SIZE = 10
 USER_SEARCH: Dict[int, str] = {}
 CARTS: Dict[int, List[dict]] = {}
 
-# Product groups are used in brand browsing: one fragrance = one card in the list.
+# One fragrance = one group containing all its volumes/testers.
 GROUPS: Dict[str, List[dict]] = {}
 for p in PRODUCTS:
     GROUPS.setdefault(group_key(p), []).append(p)
 
-# Reuse the demo Eros image for every standard Eros EDT (men) variant.
+
+def sort_variants(items):
+    def vol_num(p):
+        m = re.search(r"(\d+(?:[.,]\d+)?)\s*ml", p.get("name", ""), re.I)
+        return float(m.group(1).replace(",", ".")) if m else 9999
+    return sorted(items, key=lambda p: (vol_num(p), bool(p.get("tester")), p.get("name", "")))
+
+
+def lowest_group_price(items):
+    prices = []
+    for p in items:
+        if p.get("bottle_price_rub"):
+            prices.append(int(p["bottle_price_rub"]))
+        if p.get("tester_price_rub"):
+            prices.append(int(p["tester_price_rub"]))
+    return min(prices) if prices else None
+
+
+# ---------- Automatic brand detection ----------
+# The supplier catalog does not contain a separate brand column. We derive it from
+# the shared beginning of product names. This handles one-word and multi-word brands
+# while avoiding product-line prefixes such as "CHRISTIAN DIOR THE COLLECTION".
+def word_tokens(text: str) -> List[str]:
+    return re.findall(r"[A-Za-z0-9À-ÿА-Яа-яЁё'&-]+", str(text or "").upper())
+
+
+TOKENIZED_NAMES = [word_tokens(p.get("name", "")) for p in PRODUCTS]
+PREFIX_COUNTS: Dict[int, Dict[str, int]] = {1: {}, 2: {}, 3: {}, 4: {}}
+PREFIX_NEXT: Dict[int, Dict[str, set]] = {1: {}, 2: {}, 3: {}, 4: {}}
+for tokens in TOKENIZED_NAMES:
+    for k in range(1, min(4, len(tokens)) + 1):
+        key = " ".join(tokens[:k])
+        PREFIX_COUNTS[k][key] = PREFIX_COUNTS[k].get(key, 0) + 1
+        if len(tokens) > k:
+            PREFIX_NEXT[k].setdefault(key, set()).add(tokens[k])
+
+
+def detect_brand(name: str) -> str:
+    tokens = word_tokens(name)
+    if not tokens:
+        return "UNKNOWN"
+    chosen = tokens[0]
+    parent_count = PREFIX_COUNTS[1].get(chosen, 1)
+    for k in range(2, min(4, len(tokens)) + 1):
+        pref = " ".join(tokens[:k])
+        count = PREFIX_COUNTS[k].get(pref, 0)
+        # A real brand prefix usually covers a substantial share of its parent
+        # and has multiple different product names following it.
+        if count >= max(2, int(parent_count * 0.35)) and len(PREFIX_NEXT[k].get(pref, set())) > 1:
+            chosen = pref
+            parent_count = count
+    return chosen
+
+
+BRAND_FOR_ID: Dict[str, str] = {}
+BRAND_DISPLAY: Dict[str, str] = {}
+for p in PRODUCTS:
+    key = detect_brand(p.get("name", ""))
+    BRAND_FOR_ID[p["id"]] = key
+    BRAND_DISPLAY.setdefault(key, key.title())
+
+BRANDS: Dict[str, List[dict]] = {}
+for p in PRODUCTS:
+    BRANDS.setdefault(BRAND_FOR_ID[p["id"]], []).append(p)
+
+BRAND_KEYS = sorted(BRANDS.keys(), key=lambda x: BRAND_DISPLAY[x].lower())
+BRAND_ID_TO_KEY = {str(i): key for i, key in enumerate(BRAND_KEYS)}
+BRAND_KEY_TO_ID = {key: str(i) for i, key in enumerate(BRAND_KEYS)}
+
+# Pre-build one-fragrance groups per brand for fast browsing.
+BRAND_GROUPS: Dict[str, List[List[dict]]] = {}
+for bkey, products in BRANDS.items():
+    seen = set()
+    groups = []
+    for p in products:
+        gk = group_key(p)
+        if gk not in seen:
+            seen.add(gk)
+            groups.append(GROUPS[gk])
+    groups.sort(key=lambda items: display_name(next((x for x in items if not x.get("tester") and x.get("bottle_price_rub")), items[0])).lower())
+    BRAND_GROUPS[bkey] = groups
+
+# Demo photo for the tested Eros group.
 eros_group = norm("VERSACE EROS edt (m)")
 for p in GROUPS.get(eros_group, []):
     p["image_url"] = VERSACE_EROS_IMAGE
@@ -95,59 +168,37 @@ def back_home_kb():
 
 
 def product_group(item):
-    # Accept either a product id or an already loaded product dict.
     p = BY_ID[item] if isinstance(item, str) else item
     return GROUPS.get(group_key(p), [p])
 
 
-def sort_variants(items):
-    def vol_num(p):
-        m = re.search(r"(\d+(?:[.,]\d+)?)\s*ml", p.get("name", ""), re.I)
-        return float(m.group(1).replace(",", ".")) if m else 9999
-    return sorted(items, key=lambda p: (vol_num(p), bool(p.get("tester")), p.get("name", "")))
-
-
-def lowest_group_price(items):
-    prices = []
-    for p in items:
-        if p.get("bottle_price_rub"):
-            prices.append(int(p["bottle_price_rub"]))
-        if p.get("tester_price_rub"):
-            prices.append(int(p["tester_price_rub"]))
-    return min(prices) if prices else None
-
-
 def product_text(p):
-    group = product_group(p)
-    # Use a clean fragrance name without the selected volume in the heading.
     title = display_name(p)
     title = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml.*$", "", title, flags=re.I)
     lines = [f"<b>{title}</b>", "✨ Оригинальная парфюмерия", ""]
     if "VERSACE EROS EDT" in display_name(p).upper():
         lines += ["Свежий, яркий и чувственный аромат с мятой, зелёным яблоком, лимоном, ванилью и древесными нотами.", ""]
-    lines.append("<b>Выберите объём и вариант:</b>")
-    available = [x for x in group if x.get("bottle_price_rub") or x.get("tester_price_rub")]
-    lines.append(f"Вариантов: <b>{len(available)}</b>")
+    lines.append("<b>ВЫБЕРИТЕ ОБЪЁМ И ВАРИАНТ</b>")
     return "\n".join(lines)
 
 
-def product_kb(pid):
+def product_kb(pid, brand_id=None, brand_page=0):
     group = sort_variants(product_group(pid))
     rows = []
     for p in group:
         vol = p.get("volume") or ""
         if p.get("bottle_price_rub"):
-            rows.append([InlineKeyboardButton(
-                text=f"🧴 {vol} — {rub(p['bottle_price_rub'])}",
-                callback_data=f"addv:{p['id']}:bottle"
-            )])
+            rows.append([InlineKeyboardButton(text=f"🧴 {vol} — {rub(p['bottle_price_rub'])}", callback_data=f"addv:{p['id']}:bottle")])
         if p.get("tester_price_rub"):
-            rows.append([InlineKeyboardButton(
-                text=f"🧪 {vol} · Тестер — {rub(p['tester_price_rub'])}",
-                callback_data=f"addv:{p['id']}:tester"
-            )])
+            rows.append([InlineKeyboardButton(text=f"🧪 {vol} · Тестер — {rub(p['tester_price_rub'])}", callback_data=f"addv:{p['id']}:tester")])
     rows.append([InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")])
-    rows.append([InlineKeyboardButton(text="← К товарам VERSACE", callback_data="brand:versace")])
+    if brand_id is None:
+        bkey = BRAND_FOR_ID.get(pid)
+        brand_id = BRAND_KEY_TO_ID.get(bkey) if bkey else None
+    if brand_id is not None:
+        rows.append([InlineKeyboardButton(text="← К товарам бренда", callback_data=f"brand:{brand_id}:{brand_page}")])
+    else:
+        rows.append([InlineKeyboardButton(text="← К брендам", callback_data="brands:0")])
     rows.append([InlineKeyboardButton(text="🔎 Новый поиск", callback_data="search")])
     rows.append([InlineKeyboardButton(text="← Главное меню", callback_data="home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -180,37 +231,57 @@ def results_kb(items: List[dict], page: int, total: int):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def versace_groups():
-    groups = []
-    seen = set()
-    for p in PRODUCTS:
-        if not norm(p.get("name", "")).startswith("versace "):
-            continue
-        gk = group_key(p)
-        if gk in seen:
-            continue
-        seen.add(gk)
-        groups.append((gk, GROUPS[gk]))
-        if len(groups) >= 40:
-            break
-    return groups
-
-
-def versace_kb(groups):
+def brands_kb(page: int = 0):
+    per_page = 20
+    start = page * per_page
+    keys = BRAND_KEYS[start:start + per_page]
     rows = []
-    for gk, items in groups:
-        # Prefer the cleanest non-tester product as the list entry.
-        p = next((x for x in items if not x.get("tester")), items[0])
+    for key in keys:
+        bid = BRAND_KEY_TO_ID[key]
+        count = len(BRAND_GROUPS[key])
+        rows.append([InlineKeyboardButton(text=f"{BRAND_DISPLAY[key]} · {count}", callback_data=f"brand:{bid}:0")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"brands:{page-1}"))
+    if (page + 1) * per_page < len(BRAND_KEYS):
+        nav.append(InlineKeyboardButton(text="Далее →", callback_data=f"brands:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows += [
+        [InlineKeyboardButton(text="🔎 Найти аромат", callback_data="search")],
+        [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")],
+        [InlineKeyboardButton(text="← Главное меню", callback_data="home")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def brand_products_kb(brand_id: str, page: int = 0):
+    bkey = BRAND_ID_TO_KEY.get(str(brand_id))
+    groups = BRAND_GROUPS.get(bkey, []) if bkey else []
+    total = len(groups)
+    start = page * PAGE_SIZE
+    items = groups[start:start + PAGE_SIZE]
+    rows = []
+    for group in items:
+        p = next((x for x in group if not x.get("tester") and x.get("bottle_price_rub")), group[0])
         title = display_name(p)
         title = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml.*$", "", title, flags=re.I)
-        price = lowest_group_price(items)
-        label = title[:42] + ("…" if len(title) > 42 else "")
+        price = lowest_group_price(group)
+        label = title[:40] + ("…" if len(title) > 40 else "")
         if price:
             label += f" · от {rub(price)}"
-        rows.append([InlineKeyboardButton(text=label, callback_data=f"product:{p['id']}")])
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"product:{p['id']}:{brand_id}:{page}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"brand:{brand_id}:{page-1}"))
+    if (page + 1) * PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton(text="Далее →", callback_data=f"brand:{brand_id}:{page+1}"))
+    if nav:
+        rows.append(nav)
     rows += [
-        [InlineKeyboardButton(text="🔎 Поиск по каталогу", callback_data="search")],
+        [InlineKeyboardButton(text="← К брендам", callback_data="brands:0")],
         [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")],
+        [InlineKeyboardButton(text="🔎 Новый поиск", callback_data="search")],
         [InlineKeyboardButton(text="← Главное меню", callback_data="home")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -246,7 +317,6 @@ def cart_kb(uid: int):
 
 
 async def edit_or_replace(message, text, reply_markup=None):
-    """Edit text messages. If target is a photo card, replace it with a new text message."""
     if message.photo:
         await message.delete()
         return await message.answer(text, reply_markup=reply_markup)
@@ -262,9 +332,9 @@ async def show_search_results(target_message, user_id: int, page: int = 0):
     await edit_or_replace(target_message, f'🔎 Найдено: <b>{len(matches)}</b>\nЗапрос: «{query}»\n\nВыберите товар:', results_kb(items, page, len(matches)))
 
 
-async def send_product(message, p):
+async def send_product(message, p, brand_id=None, brand_page=0):
     text = product_text(p)
-    kb = product_kb(p["id"])
+    kb = product_kb(p["id"], brand_id, brand_page)
     image = p.get("image_url")
     if image:
         try:
@@ -291,21 +361,30 @@ async def home(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "catalog")
 async def catalog(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="VERSACE", callback_data="brand:versace")],
-        [InlineKeyboardButton(text="🔎 Найти аромат", callback_data="search")],
-        [InlineKeyboardButton(text="📚 Весь каталог", callback_data="catalog_search")],
-        [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")],
-        [InlineKeyboardButton(text="← Главное меню", callback_data="home")]
-    ])
-    await edit_or_replace(callback.message, f"🛍 <b>Каталог PARFERA</b>\n\nВ каталоге <b>{len(PRODUCTS):,}</b> позиций.\n\nВыберите бренд:", kb)
+    text = f"🛍 <b>Каталог PARFERA</b>\n\nВ каталоге <b>{len(PRODUCTS):,}</b> позиций.\nБрендов: <b>{len(BRAND_KEYS)}</b>\n\nВыберите бренд:"
+    await edit_or_replace(callback.message, text, brands_kb(0))
     await callback.answer()
 
 
-@dp.callback_query(F.data == "brand:versace")
-async def brand_versace(callback: CallbackQuery):
-    groups = versace_groups()
-    await edit_or_replace(callback.message, "<b>VERSACE</b>\n\nВыберите аромат:", versace_kb(groups))
+@dp.callback_query(F.data.startswith("brands:"))
+async def brands_page(callback: CallbackQuery):
+    page = int(callback.data.split(":")[1])
+    text = f"🛍 <b>Бренды PARFERA</b>\n\nВсего брендов: <b>{len(BRAND_KEYS)}</b>\nВыберите бренд:"
+    await edit_or_replace(callback.message, text, brands_kb(page))
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("brand:"))
+async def brand_page(callback: CallbackQuery):
+    _, brand_id, page = callback.data.split(":")
+    key = BRAND_ID_TO_KEY.get(brand_id)
+    if not key:
+        await callback.answer("Бренд не найден", show_alert=True)
+        return
+    total = len(BRAND_GROUPS.get(key, []))
+    title = BRAND_DISPLAY[key]
+    text = f"<b>{title}</b>\n\nАроматов: <b>{total}</b>\nВыберите аромат:"
+    await edit_or_replace(callback.message, text, brand_products_kb(brand_id, int(page)))
     await callback.answer()
 
 
@@ -339,13 +418,16 @@ async def page(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("product:"))
 async def product(callback: CallbackQuery):
-    pid = callback.data.split(":", 1)[1]
+    parts = callback.data.split(":")
+    pid = parts[1]
+    brand_id = parts[2] if len(parts) > 2 else None
+    brand_page = int(parts[3]) if len(parts) > 3 else 0
     p = BY_ID.get(pid)
     if not p:
         await callback.answer("Товар не найден", show_alert=True)
         return
     await callback.message.delete()
-    await send_product(callback.message, p)
+    await send_product(callback.message, p, brand_id, brand_page)
     await callback.answer()
 
 
@@ -372,15 +454,7 @@ async def add_variant(callback: CallbackQuery):
     if existing:
         existing["qty"] += 1
     else:
-        cart.append({
-            "pid": pid,
-            "type_key": typ,
-            "name": display_name(p),
-            "volume": p.get("volume", ""),
-            "type": label,
-            "price": int(price),
-            "qty": 1
-        })
+        cart.append({"pid": pid, "type_key": typ, "name": display_name(p), "volume": p.get("volume", ""), "type": label, "price": int(price), "qty": 1})
     await callback.answer("Добавлено в корзину")
     await callback.message.answer(cart_text(uid), reply_markup=cart_kb(uid))
 
@@ -469,6 +543,7 @@ async def main():
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         runner = await run_web_server()
+        print(f"Catalog loaded: {len(PRODUCTS)} products, {len(BRAND_KEYS)} brands, {len(GROUPS)} fragrance groups")
         print("Starting Telegram long polling...")
         await dp.start_polling(bot, drop_pending_updates=True)
     finally:
