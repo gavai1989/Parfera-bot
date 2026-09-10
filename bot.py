@@ -22,10 +22,9 @@ with open("catalog.json", encoding="utf-8") as f:
 
 # Demo product photo for the first test card.
 VERSACE_EROS_IMAGE = os.path.join("images", "versace_eros_product.jpg")
-
 for p in PRODUCTS:
     n = p.get("name", "").lower()
-    if "versace eros edt (m) 100ml" in n:
+    if "versace eros edt (m) 100ml" in n and "tester" not in n:
         p["image_url"] = VERSACE_EROS_IMAGE
 
 
@@ -33,14 +32,49 @@ def norm(text: str) -> str:
     text = str(text or "").lower().replace("ё", "е")
     return re.sub(r"\s+", " ", text).strip()
 
+
+def rub(value):
+    if value in (None, "", 0):
+        return None
+    return f"{int(value):,}".replace(",", " ") + " ₽"
+
+
+def display_name(p):
+    name = p.get("name", "")
+    name = re.sub(r"\s+TESTER$", "", name, flags=re.I)
+    return name
+
+
+def group_key(p):
+    """Group the same fragrance/concentration/gender across volumes and tester.
+    Gift sets remain separate variants because their extra contents stay in the key.
+    """
+    base = p.get("base_name") or p.get("name", "")
+    base = re.sub(r"\s+TESTER$", "", base, flags=re.I)
+    base = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml\b", "", base, count=1, flags=re.I)
+    return norm(base)
+
+
 SEARCH_TEXT = {p["id"]: norm(f'{p.get("name", "")} {p.get("article", "")}') for p in PRODUCTS}
 BY_ID = {p["id"]: p for p in PRODUCTS}
 PAGE_SIZE = 10
 USER_SEARCH: Dict[int, str] = {}
 CARTS: Dict[int, List[dict]] = {}
 
+# Product groups are used in brand browsing: one fragrance = one card in the list.
+GROUPS: Dict[str, List[dict]] = {}
+for p in PRODUCTS:
+    GROUPS.setdefault(group_key(p), []).append(p)
+
+# Reuse the demo Eros image for every standard Eros EDT (men) variant.
+eros_group = norm("VERSACE EROS edt (m)")
+for p in GROUPS.get(eros_group, []):
+    p["image_url"] = VERSACE_EROS_IMAGE
+
+
 class SearchState(StatesGroup):
     waiting = State()
+
 
 dp = Dispatcher()
 
@@ -60,42 +94,59 @@ def back_home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню", callback_data="home")]])
 
 
-def rub(value):
-    if value in (None, "", 0):
-        return None
-    return f"{int(value):,}".replace(",", " ") + " ₽"
+def product_group(pid):
+    p = BY_ID[pid]
+    return GROUPS.get(group_key(p), [p])
 
 
-def display_name(p):
-    name = p.get("name", "")
-    name = re.sub(r"\s+TESTER$", "", name, flags=re.I)
-    return name
+def sort_variants(items):
+    def vol_num(p):
+        m = re.search(r"(\d+(?:[.,]\d+)?)\s*ml", p.get("name", ""), re.I)
+        return float(m.group(1).replace(",", ".")) if m else 9999
+    return sorted(items, key=lambda p: (vol_num(p), bool(p.get("tester")), p.get("name", "")))
+
+
+def lowest_group_price(items):
+    prices = []
+    for p in items:
+        if p.get("bottle_price_rub"):
+            prices.append(int(p["bottle_price_rub"]))
+        if p.get("tester_price_rub"):
+            prices.append(int(p["tester_price_rub"]))
+    return min(prices) if prices else None
 
 
 def product_text(p):
-    lines = [f'<b>{display_name(p)}</b>']
-    lines.append("✨ Оригинальная парфюмерия")
-    if p.get("volume"):
-        lines.append(f'Объём: <b>{p["volume"]}</b>')
-    if p.get("article"):
-        lines.append(f'Артикул: {p["article"]}')
-    if p.get("bottle_price_rub"):
-        lines.append(f'Флакон — <b>{rub(p["bottle_price_rub"])}</b>')
-    if p.get("tester_price_rub"):
-        lines.append(f'Тестер — <b>{rub(p["tester_price_rub"])}</b>')
+    group = product_group(p)
+    # Use a clean fragrance name without the selected volume in the heading.
+    title = display_name(p)
+    title = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml.*$", "", title, flags=re.I)
+    lines = [f"<b>{title}</b>", "✨ Оригинальная парфюмерия", ""]
     if "VERSACE EROS EDT" in display_name(p).upper():
-        lines += ["", "Свежий, яркий и чувственный аромат с мятой, зелёным яблоком, лимоном, ванилью и древесными нотами."]
+        lines += ["Свежий, яркий и чувственный аромат с мятой, зелёным яблоком, лимоном, ванилью и древесными нотами.", ""]
+    lines.append("<b>Выберите объём и вариант:</b>")
+    available = [x for x in group if x.get("bottle_price_rub") or x.get("tester_price_rub")]
+    lines.append(f"Вариантов: <b>{len(available)}</b>")
     return "\n".join(lines)
 
 
 def product_kb(pid):
-    p = BY_ID[pid]
+    group = sort_variants(product_group(pid))
     rows = []
-    if p.get("bottle_price_rub"):
-        rows.append([InlineKeyboardButton(text=f"🧴 Флакон — {rub(p['bottle_price_rub'])}", callback_data=f"add:{pid}:bottle")])
-    if p.get("tester_price_rub"):
-        rows.append([InlineKeyboardButton(text=f"🧪 Тестер — {rub(p['tester_price_rub'])}", callback_data=f"add:{pid}:tester")])
+    for p in group:
+        vol = p.get("volume") or ""
+        if p.get("bottle_price_rub"):
+            rows.append([InlineKeyboardButton(
+                text=f"🧴 {vol} — {rub(p['bottle_price_rub'])}",
+                callback_data=f"addv:{p['id']}:bottle"
+            )])
+        if p.get("tester_price_rub"):
+            rows.append([InlineKeyboardButton(
+                text=f"🧪 {vol} · Тестер — {rub(p['tester_price_rub'])}",
+                callback_data=f"addv:{p['id']}:tester"
+            )])
     rows.append([InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")])
+    rows.append([InlineKeyboardButton(text="← К товарам VERSACE", callback_data="brand:versace")])
     rows.append([InlineKeyboardButton(text="🔎 Новый поиск", callback_data="search")])
     rows.append([InlineKeyboardButton(text="← Главное меню", callback_data="home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -128,15 +179,34 @@ def results_kb(items: List[dict], page: int, total: int):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def versace_items():
-    return [p for p in PRODUCTS if norm(p.get("name", "")).startswith("versace ") and not p.get("tester")][:30]
+def versace_groups():
+    groups = []
+    seen = set()
+    for p in PRODUCTS:
+        if not norm(p.get("name", "")).startswith("versace "):
+            continue
+        gk = group_key(p)
+        if gk in seen:
+            continue
+        seen.add(gk)
+        groups.append((gk, GROUPS[gk]))
+        if len(groups) >= 40:
+            break
+    return groups
 
 
-def versace_kb(items):
+def versace_kb(groups):
     rows = []
-    for p in items:
+    for gk, items in groups:
+        # Prefer the cleanest non-tester product as the list entry.
+        p = next((x for x in items if not x.get("tester")), items[0])
         title = display_name(p)
-        rows.append([InlineKeyboardButton(text=title[:52], callback_data=f"product:{p['id']}")])
+        title = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml.*$", "", title, flags=re.I)
+        price = lowest_group_price(items)
+        label = title[:42] + ("…" if len(title) > 42 else "")
+        if price:
+            label += f" · от {rub(price)}"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"product:{p['id']}")])
     rows += [
         [InlineKeyboardButton(text="🔎 Поиск по каталогу", callback_data="search")],
         [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")],
@@ -174,13 +244,21 @@ def cart_kb(uid: int):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def edit_or_replace(message, text, reply_markup=None):
+    """Edit text messages. If target is a photo card, replace it with a new text message."""
+    if message.photo:
+        await message.delete()
+        return await message.answer(text, reply_markup=reply_markup)
+    return await message.edit_text(text, reply_markup=reply_markup)
+
+
 async def show_search_results(target_message, user_id: int, page: int = 0):
     query = USER_SEARCH.get(user_id, "")
     matches, items = search_results(query, page)
     if not matches:
-        await target_message.edit_text(f'🔎 По запросу «{query}» ничего не найдено.\n\nПопробуйте название бренда или аромата.', reply_markup=back_home_kb())
+        await edit_or_replace(target_message, f'🔎 По запросу «{query}» ничего не найдено.\n\nПопробуйте название бренда или аромата.', back_home_kb())
         return
-    await target_message.edit_text(f'🔎 Найдено: <b>{len(matches)}</b>\nЗапрос: «{query}»\n\nВыберите товар:', reply_markup=results_kb(items, page, len(matches)))
+    await edit_or_replace(target_message, f'🔎 Найдено: <b>{len(matches)}</b>\nЗапрос: «{query}»\n\nВыберите товар:', results_kb(items, page, len(matches)))
 
 
 async def send_product(message, p):
@@ -205,7 +283,7 @@ async def start(message: Message, state: FSMContext):
 @dp.callback_query(F.data == "home")
 async def home(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.edit_text("<b>PARFERA</b>\n\nНишевая парфюмерия и персональный подбор.\n\nВыберите раздел:", reply_markup=home_kb())
+    await edit_or_replace(callback.message, "<b>PARFERA</b>\n\nНишевая парфюмерия и персональный подбор.\n\nВыберите раздел:", home_kb())
     await callback.answer()
 
 
@@ -219,21 +297,21 @@ async def catalog(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")],
         [InlineKeyboardButton(text="← Главное меню", callback_data="home")]
     ])
-    await callback.message.edit_text(f"🛍 <b>Каталог PARFERA</b>\n\nВ каталоге <b>{len(PRODUCTS):,}</b> позиций.\n\nПока первым тестируем раздел VERSACE:", reply_markup=kb)
+    await edit_or_replace(callback.message, f"🛍 <b>Каталог PARFERA</b>\n\nВ каталоге <b>{len(PRODUCTS):,}</b> позиций.\n\nВыберите бренд:", kb)
     await callback.answer()
 
 
 @dp.callback_query(F.data == "brand:versace")
 async def brand_versace(callback: CallbackQuery):
-    items = versace_items()
-    await callback.message.edit_text("<b>VERSACE</b>\n\nВыберите аромат:", reply_markup=versace_kb(items))
+    groups = versace_groups()
+    await edit_or_replace(callback.message, "<b>VERSACE</b>\n\nВыберите аромат:", versace_kb(groups))
     await callback.answer()
 
 
 @dp.callback_query(F.data.in_({"search", "catalog_search"}))
 async def search(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SearchState.waiting)
-    await callback.message.edit_text("🔎 <b>Поиск по каталогу</b>\n\nВведите название бренда, аромата или артикул.\n\nНапример: <b>Versace Eros</b>, <b>Erba Pura</b> или <b>000-002</b>.", reply_markup=back_home_kb())
+    await edit_or_replace(callback.message, "🔎 <b>Поиск по каталогу</b>\n\nВведите название бренда, аромата или артикул.\n\nНапример: <b>Versace Eros</b>, <b>Erba Pura</b> или <b>000-002</b>.", back_home_kb())
     await callback.answer()
 
 
@@ -270,8 +348,8 @@ async def product(callback: CallbackQuery):
     await callback.answer()
 
 
-@dp.callback_query(F.data.startswith("add:"))
-async def add(callback: CallbackQuery):
+@dp.callback_query(F.data.startswith("addv:"))
+async def add_variant(callback: CallbackQuery):
     _, pid, typ = callback.data.split(":")
     p = BY_ID.get(pid)
     if not p:
@@ -293,7 +371,15 @@ async def add(callback: CallbackQuery):
     if existing:
         existing["qty"] += 1
     else:
-        cart.append({"pid": pid, "type_key": typ, "name": display_name(p), "volume": p.get("volume", ""), "type": label, "price": int(price), "qty": 1})
+        cart.append({
+            "pid": pid,
+            "type_key": typ,
+            "name": display_name(p),
+            "volume": p.get("volume", ""),
+            "type": label,
+            "price": int(price),
+            "qty": 1
+        })
     await callback.answer("Добавлено в корзину")
     await callback.message.answer(cart_text(uid), reply_markup=cart_kb(uid))
 
@@ -301,7 +387,7 @@ async def add(callback: CallbackQuery):
 @dp.callback_query(F.data == "cart")
 async def cart(callback: CallbackQuery):
     uid = callback.from_user.id
-    await callback.message.edit_text(cart_text(uid), reply_markup=cart_kb(uid))
+    await edit_or_replace(callback.message, cart_text(uid), cart_kb(uid))
     await callback.answer()
 
 
@@ -315,7 +401,7 @@ async def qty(callback: CallbackQuery):
         items[i]["qty"] += int(delta)
         if items[i]["qty"] <= 0:
             items.pop(i)
-    await callback.message.edit_text(cart_text(uid), reply_markup=cart_kb(uid))
+    await edit_or_replace(callback.message, cart_text(uid), cart_kb(uid))
     await callback.answer()
 
 
@@ -326,13 +412,13 @@ async def delete_item(callback: CallbackQuery):
     items = CARTS.get(uid, [])
     if 0 <= i < len(items):
         items.pop(i)
-    await callback.message.edit_text(cart_text(uid), reply_markup=cart_kb(uid))
+    await edit_or_replace(callback.message, cart_text(uid), cart_kb(uid))
     await callback.answer("Удалено")
 
 
 @dp.callback_query(F.data == "checkout")
 async def checkout(callback: CallbackQuery):
-    await callback.message.edit_text("📦 <b>Оформление заказа</b>\n\nНа тестовом этапе заказ пока не оплачивается. Следующим этапом подключим данные покупателя, доставку и отправку заказа менеджеру PARFERA.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Корзина", callback_data="cart")], [InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
+    await edit_or_replace(callback.message, "📦 <b>Оформление заказа</b>\n\nНа тестовом этапе заказ пока не оплачивается. Следующим этапом подключим данные покупателя, доставку и отправку заказа менеджеру PARFERA.", InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Корзина", callback_data="cart")], [InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
     await callback.answer()
 
 
@@ -343,19 +429,19 @@ async def noop(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "popular")
 async def popular(callback: CallbackQuery):
-    await callback.message.edit_text("⭐ <b>Популярное</b>\n\nПодключим после теста каталога.", reply_markup=back_home_kb())
+    await edit_or_replace(callback.message, "⭐ <b>Популярное</b>\n\nПодключим после теста каталога.", back_home_kb())
     await callback.answer()
 
 
 @dp.callback_query(F.data == "new")
 async def new(callback: CallbackQuery):
-    await callback.message.edit_text("🆕 <b>Новинки</b>\n\nПодключим после теста каталога.", reply_markup=back_home_kb())
+    await edit_or_replace(callback.message, "🆕 <b>Новинки</b>\n\nПодключим после теста каталога.", back_home_kb())
     await callback.answer()
 
 
 @dp.callback_query(F.data == "consultant")
 async def consultant(callback: CallbackQuery):
-    await callback.message.edit_text("👤 <b>Консультант PARFERA</b>\n\nПомогу подобрать аромат, ответить на вопросы и рассказать о новинках.\n\nНапишите, какой аромат вы ищете.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔎 Подобрать аромат", callback_data="search")], [InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
+    await edit_or_replace(callback.message, "👤 <b>Консультант PARFERA</b>\n\nПомогу подобрать аромат, ответить на вопросы и рассказать о новинках.\n\nНапишите, какой аромат вы ищете.", InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔎 Подобрать аромат", callback_data="search")], [InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
     await callback.answer()
 
 
