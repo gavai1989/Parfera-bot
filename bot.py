@@ -35,10 +35,18 @@ def rub(value):
 
 
 def clean_product_name(name: str) -> str:
-    """Human-friendly fragrance name for the Telegram shop."""
+    """Clean supplier technical markers from the customer-facing fragrance name."""
     name = str(name or "").strip()
-    # Keep the supplier naming visible for now, as requested.
-    return re.sub(r"\s+", " ", name).strip(" -")
+    # Keep useful words, but hide supplier-only markers from the shop title:
+    # concentration, gender markers, volume, TESTER and packaging notes.
+    name = re.sub(r"\s+TESTER\b", "", name, flags=re.I)
+    name = re.sub(r"\s+(?:без крышки|с крышкой|пробник)\b", "", name, flags=re.I)
+    name = re.sub(r"\s*\b\d+(?:[.,]\d+)?\s*ml\b", "", name, flags=re.I)
+    name = re.sub(r"\s*\((?:m|w|u)\)", "", name, flags=re.I)
+    name = re.sub(r"\s+\b(?:edp|edt|parfum|extrait|eau de parfum|eau de toilette)\b", "", name, flags=re.I)
+    name = re.sub(r"\s*[-–—|]+\s*$", "", name)
+    name = re.sub(r"\s+", " ", name).strip(" -–—")
+    return name
 
 
 def display_name(p):
@@ -54,7 +62,7 @@ def group_key(p):
     name = re.sub(r"\s+(?:без крышки|с крышкой)\b", "", name, flags=re.I)
     name = re.sub(r"\s+пробник\b", "", name, flags=re.I)
     name = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml\b", "", name, flags=re.I)
-    name = re.sub(r"\s*\((?:m|w|u)\)\b", "", name, flags=re.I)
+    name = re.sub(r"\s*\((?:m|w|u)\)", "", name, flags=re.I)
     return norm(name)
 
 
@@ -63,6 +71,7 @@ BY_ID = {p["id"]: p for p in PRODUCTS}
 PAGE_SIZE = 10
 USER_SEARCH: Dict[int, str] = {}
 CARTS: Dict[int, List[dict]] = {}
+FAVORITES: Dict[int, set] = {}
 
 # One fragrance = one group containing all its volumes/testers.
 GROUPS: Dict[str, List[dict]] = {}
@@ -171,7 +180,7 @@ for bkey, products in BRANDS.items():
     BRAND_GROUPS[bkey] = groups
 
 # Demo photo for the tested Eros group.
-eros_group = norm("VERSACE EROS edt (m)")
+eros_group = group_key({"name": "VERSACE EROS edt (m) 100ml"})
 for p in GROUPS.get(eros_group, []):
     p["image_url"] = VERSACE_EROS_IMAGE
 
@@ -207,23 +216,34 @@ def product_text(p):
     title = display_name(p)
     raw = str(p.get("name", ""))
     lines = [f"<b>{title}</b>", "✨ Оригинальная парфюмерия"]
-    # Keep supplier technical markers available, but present the main metadata
-    # in a compact premium-card style.
-    meta = []
-    m = re.search(r"\b(edp|edt|parfum|extrait)\b", raw, re.I)
+
+    concentration = None
+    m = re.search(r"\b(edp|edt|parfum|extrait|eau de parfum|eau de toilette)\b", raw, re.I)
     if m:
-        meta.append(m.group(1).upper())
-    if re.search(r"\(m\)", raw, re.I):
-        meta.append("Мужской")
-    elif re.search(r"\(w\)", raw, re.I):
-        meta.append("Женский")
+        concentration = {
+            "edp": "EAU DE PARFUM",
+            "edt": "EAU DE TOILETTE",
+            "parfum": "PARFUM",
+            "extrait": "EXTRAIT",
+            "eau de parfum": "EAU DE PARFUM",
+            "eau de toilette": "EAU DE TOILETTE",
+        }.get(m.group(1).lower(), m.group(1).upper())
+    gender = "Мужской" if re.search(r"\(m\)", raw, re.I) else ("Женский" if re.search(r"\(w\)", raw, re.I) else None)
+    meta = [x for x in (concentration, gender) if x]
     if meta:
         lines.append(" · ".join(meta))
+
     lines.append("")
-    if "VERSACE EROS EDT" in raw.upper():
-        lines += ["Свежий, яркий и чувственный аромат с мятой, зелёным яблоком, лимоном, ванилью и древесными нотами.", ""]
+    if "VERSACE EROS" in raw.upper():
+        lines.append("Свежий, яркий и чувственный аромат с мятой, зелёным яблоком, лимоном, ванилью и древесными нотами.")
+        lines.append("")
+        lines.append("🍃 <b>Верхние ноты</b>  мята, лимон, яблоко")
+        lines.append("♡ <b>Ноты сердца</b>  бобы тонка, герань")
+        lines.append("〰 <b>Базовые ноты</b>  ваниль, кедр, ветивер")
     else:
-        lines += ["Нишевая и оригинальная парфюмерия PARFERA.", ""]
+        lines.append("Нишевая и оригинальная парфюмерия PARFERA.")
+
+    lines.append("")
     lines.append("<b>ВЫБЕРИТЕ ОБЪЁМ И ВАРИАНТ</b>")
     return "\n".join(lines)
 
@@ -231,24 +251,31 @@ def product_text(p):
 def product_kb(pid, brand_id=None, brand_page=0):
     group = unique_variants(product_group(pid))
     rows = []
-    option_rows = []
+    option_buttons = []
     for p in group:
         vol = p.get("volume") or ""
-        options = []
         if p.get("bottle_price_rub"):
-            options.append(InlineKeyboardButton(text=f"🧴 {vol} — {rub(p['bottle_price_rub'])}", callback_data=f"addv:{p['id']}:bottle"))
+            option_buttons.append(InlineKeyboardButton(
+                text=f"{vol}\n{rub(p['bottle_price_rub'])}",
+                callback_data=f"addv:{p['id']}:bottle"
+            ))
         if p.get("tester_price_rub"):
-            options.append(InlineKeyboardButton(text=f"🧪 {vol} · Тестер — {rub(p['tester_price_rub'])}", callback_data=f"addv:{p['id']}:tester"))
-        if options:
-            option_rows.append(options)
-    # Two-column selector on phones when there are many variants; long tester
-    # labels remain full-width for readability.
-    for opts in option_rows:
-        if len(opts) == 2 and all(len(x.text) <= 25 for x in opts):
-            rows.append(opts)
-        else:
-            rows.extend([[x] for x in opts])
+            option_buttons.append(InlineKeyboardButton(
+                text=f"{vol} Тестер\n{rub(p['tester_price_rub'])}",
+                callback_data=f"addv:{p['id']}:tester"
+            ))
+
+    # Premium compact selector: three options per row when possible.
+    for i in range(0, len(option_buttons), 3):
+        rows.append(option_buttons[i:i + 3])
+
+    uid = None
+    is_fav = False
+    # Favorites are optional and kept per Telegram user.
+    # The product callback itself supplies the user later; button starts in neutral state.
     rows.append([InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")])
+    rows.append([InlineKeyboardButton(text="♡ В избранное", callback_data=f"fav:{pid}")])
+
     if brand_id is None:
         bkey = BRAND_FOR_ID.get(pid)
         brand_id = BRAND_KEY_TO_ID.get(bkey) if bkey else None
@@ -256,8 +283,10 @@ def product_kb(pid, brand_id=None, brand_page=0):
         rows.append([InlineKeyboardButton(text="← К товарам бренда", callback_data=f"brand:{brand_id}:{brand_page}")])
     else:
         rows.append([InlineKeyboardButton(text="← К брендам", callback_data="brands:0")])
-    rows.append([InlineKeyboardButton(text="🔎 Новый поиск", callback_data="search")])
-    rows.append([InlineKeyboardButton(text="← Главное меню", callback_data="home")])
+    rows.append([
+        InlineKeyboardButton(text="⌕ Новый поиск", callback_data="search"),
+        InlineKeyboardButton(text="▦ Главное меню", callback_data="home")
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -430,7 +459,7 @@ async def home(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "catalog")
 async def catalog(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    text = f"🛍 <b>Каталог PARFERA</b>\n\nВ каталоге <b>{len(PRODUCTS):,}</b> позиций.\nБрендов: <b>{len(BRAND_KEYS)}</b>\n\nВыберите бренд:"
+    text = f"<b>PARFERA</b>\n\n<b>КАТАЛОГ</b>\n\nБрендов: <b>{len(BRAND_KEYS)}</b>\n\nВыберите бренд:"
     await edit_or_replace(callback.message, text, brands_kb(0))
     await callback.answer()
 
@@ -527,6 +556,18 @@ async def add_variant(callback: CallbackQuery):
     await callback.answer("Добавлено в корзину")
     await callback.message.answer(cart_text(uid), reply_markup=cart_kb(uid))
 
+
+@dp.callback_query(F.data.startswith("fav:"))
+async def favorite(callback: CallbackQuery):
+    pid = callback.data.split(":", 1)[1]
+    uid = callback.from_user.id
+    favs = FAVORITES.setdefault(uid, set())
+    if pid in favs:
+        favs.remove(pid)
+        await callback.answer("Убрано из избранного")
+    else:
+        favs.add(pid)
+        await callback.answer("Добавлено в избранное")
 
 @dp.callback_query(F.data == "cart")
 async def cart(callback: CallbackQuery):
