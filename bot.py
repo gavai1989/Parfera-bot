@@ -53,6 +53,29 @@ def display_name(p):
     return clean_product_name(p.get("name", ""))
 
 
+def product_meta(p):
+    """Customer-facing description of concentration and gender without supplier codes."""
+    raw = str(p.get("name", ""))
+    concentration = None
+    m = re.search(r"\b(edp|edt|parfum|extrait|eau de parfum|eau de toilette)\b", raw, re.I)
+    if m:
+        concentration = {
+            "edp": "Парфюмерная вода",
+            "edt": "Туалетная вода",
+            "parfum": "Парфюм",
+            "extrait": "Экстракт",
+            "eau de parfum": "Парфюмерная вода",
+            "eau de toilette": "Туалетная вода",
+        }.get(m.group(1).lower(), m.group(1).upper())
+    gender = None
+    if re.search(r"\(m\)", raw, re.I):
+        gender = "Мужские"
+    elif re.search(r"\(w\)", raw, re.I):
+        gender = "Женские"
+    meta = [x for x in (concentration, gender) if x]
+    return " · ".join(meta)
+
+
 def group_key(p):
     # Group one fragrance into one card. Volume, TESTER and supplier condition
     # markers are variants, not separate fragrances. Concentration (EDT/EDP/EDP
@@ -68,7 +91,7 @@ def group_key(p):
 
 SEARCH_TEXT = {p["id"]: norm(f'{p.get("name", "")} {p.get("article", "")}') for p in PRODUCTS}
 BY_ID = {p["id"]: p for p in PRODUCTS}
-PAGE_SIZE = 6
+PAGE_SIZE = 10
 USER_SEARCH: Dict[int, str] = {}
 CARTS: Dict[int, List[dict]] = {}
 FAVORITES: Dict[int, set] = {}
@@ -217,21 +240,9 @@ def product_text(p):
     raw = str(p.get("name", ""))
     lines = [f"<b>{title}</b>", "✨ Оригинальная парфюмерия"]
 
-    concentration = None
-    m = re.search(r"\b(edp|edt|parfum|extrait|eau de parfum|eau de toilette)\b", raw, re.I)
-    if m:
-        concentration = {
-            "edp": "EAU DE PARFUM",
-            "edt": "EAU DE TOILETTE",
-            "parfum": "PARFUM",
-            "extrait": "EXTRAIT",
-            "eau de parfum": "EAU DE PARFUM",
-            "eau de toilette": "EAU DE TOILETTE",
-        }.get(m.group(1).lower(), m.group(1).upper())
-    gender = "Мужской" if re.search(r"\(m\)", raw, re.I) else ("Женский" if re.search(r"\(w\)", raw, re.I) else None)
-    meta = [x for x in (concentration, gender) if x]
+    meta = product_meta(p)
     if meta:
-        lines.append(" · ".join(meta))
+        lines.append(meta)
 
     lines.append("")
     if "VERSACE EROS" in raw.upper():
@@ -310,11 +321,14 @@ def results_kb(items: List[dict], page: int, total: int):
     rows = []
     for p in items:
         title = display_name(p)
-        if len(title) > 48:
-            title = title[:45] + "…"
+        meta = product_meta(p)
+        if meta:
+            title += f" · {meta}"
         price = lowest_group_price(product_group(p))
         if price:
             title += f" · от {rub(price)}"
+        if len(title) > 64:
+            title = title[:61] + "…"
         rows.append([InlineKeyboardButton(text=title, callback_data=f'product:{p["id"]}')])
     nav = []
     if page > 0:
@@ -353,23 +367,6 @@ def brands_kb(page: int = 0):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def product_meta(p):
-    raw = str(p.get("name", ""))
-    concentration = None
-    m = re.search(r"\b(edp|edt|parfum|extrait|eau de parfum|eau de toilette)\b", raw, re.I)
-    if m:
-        concentration = {
-            "edp": "Парфюмерная вода",
-            "edt": "Туалетная вода",
-            "parfum": "Парфюм",
-            "extrait": "Экстракт",
-            "eau de parfum": "Парфюмерная вода",
-            "eau de toilette": "Туалетная вода",
-        }.get(m.group(1).lower())
-    gender = "Мужские" if re.search(r"\(m\)", raw, re.I) else ("Женские" if re.search(r"\(w\)", raw, re.I) else None)
-    return " · ".join(x for x in (concentration, gender) if x)
-
-
 def brand_products_kb(brand_id: str, page: int = 0):
     key = BRAND_ID_TO_KEY[brand_id]
     groups = BRAND_GROUPS[key]
@@ -377,24 +374,18 @@ def brand_products_kb(brand_id: str, page: int = 0):
     start = page * PAGE_SIZE
     items = groups[start:start + PAGE_SIZE]
     rows = []
-
     for group in items:
-        p = next((x for x in group if x.get("bottle_price_rub") or x.get("tester_price_rub")), group[0])
+        p = group[0]
         title = display_name(p)
-        if len(title) > 38:
-            title = title[:35] + "…"
-        price = lowest_group_price(group)
         meta = product_meta(p)
-        lines = [title]
         if meta:
-            lines.append(meta)
+            title += f" · {meta}"
+        price = lowest_group_price(group)
         if price:
-            lines.append(f"от {rub(price)}")
-        rows.append([InlineKeyboardButton(
-            text="\n".join(lines),
-            callback_data=f"product:{p['id']}:{brand_id}:{page}"
-        )])
-
+            title += f" · от {rub(price)}"
+        if len(title) > 64:
+            title = title[:61] + "…"
+        rows.append([InlineKeyboardButton(text=title, callback_data=f"product:{p['id']}:{brand_id}:{page}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"brand:{brand_id}:{page-1}"))
@@ -402,12 +393,11 @@ def brand_products_kb(brand_id: str, page: int = 0):
         nav.append(InlineKeyboardButton(text="Далее →", callback_data=f"brand:{brand_id}:{page+1}"))
     if nav:
         rows.append(nav)
-
     rows += [
         [InlineKeyboardButton(text="← К брендам", callback_data="brands:0")],
         [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")],
-        [InlineKeyboardButton(text="⌕ Новый поиск", callback_data="search")],
-        [InlineKeyboardButton(text="▦ Главное меню", callback_data="home")]
+        [InlineKeyboardButton(text="🔎 Новый поиск", callback_data="search")],
+        [InlineKeyboardButton(text="← Главное меню", callback_data="home")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -508,7 +498,7 @@ async def brand_page(callback: CallbackQuery):
         return
     total = len(BRAND_GROUPS.get(key, []))
     title = BRAND_DISPLAY[key]
-    text = f"<b>{title}</b>\n\nСмелость. Стиль. Характер.\n\nАроматов: <b>{total}</b>\nВыберите аромат:"
+    text = f"<b>{title}</b>\n\nАроматов: <b>{total}</b>\nВыберите аромат:"
     await edit_or_replace(callback.message, text, brand_products_kb(brand_id, int(page)))
     await callback.answer()
 
