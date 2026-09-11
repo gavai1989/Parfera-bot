@@ -135,40 +135,305 @@ def lowest_group_price(items):
 
 
 # ---------- Automatic brand detection ----------
-# The supplier catalog does not contain a separate brand column. We derive it from
-# the shared beginning of product names. This handles one-word and multi-word brands
-# while avoiding product-line prefixes such as "CHRISTIAN DIOR THE COLLECTION".
+# The supplier file has no dedicated brand column.  Use a curated list of
+# multi-word brand prefixes first; only then fall back to the first token.
+# This prevents false brands such as MAX, ANTONIO, ACQUA, MAISON, THE, etc.
+# from being shown as separate brands when the real brand is multi-word.
+BRAND_PREFIXES = {
+    'MAX AZRIA': 'Max Azria',
+    'MAX MARA': 'Max Mara',
+    'MAX PHILIP': 'Max Philip',
+    'ANTONIO BANDERAS': 'Antonio Banderas',
+    'HERMES': 'Hermès',
+    'ORMONDE JAYNE': 'Ormonde Jayne',
+    'ACQUA DI BIELLA': 'Acqua di Biella',
+    'ACQUA DI PARMA': 'Acqua di Parma',
+    'KEIKO MECHERI': 'Keiko Mecheri',
+    'KARL LAGERFELD': 'Karl Lagerfeld',
+    'RAMON BEJAR': 'Ramon Bejar',
+    'FILIPPO SORCINELLI': 'Filippo Sorcinelli',
+    'JO LOVES': 'Jo Loves',
+    'JO MALONE': 'Jo Malone',
+    'BOIS 1920': 'Bois 1920',
+    'DR. GRITTI': 'Dr. Gritti',
+    'DR. VRANJES': 'Dr. Vranjes',
+    'RICHARD DEBOR': 'Richard Debor',
+    'RICHARD JAMES': 'Richard James',
+    'RICHARD MAISON DE PARFUM': 'Richard Maison de Parfum',
+    'MARC JACOBS': 'Marc Jacobs',
+    'GIAN MARCO VENTURI': 'Gian Marco Venturi',
+    'BRUNO ACAMPORA': 'Bruno Acampora',
+    'JACQUES BOGART': 'Jacques Bogart',
+    'ANNA ROZENMEER': 'Anna Rozenmeer',
+    'ANNA SUI': 'Anna Sui',
+    'THOMAS DE MONACO': 'Thomas de Monaco',
+    'THOMAS KOSMALA': 'Thomas Kosmala',
+    'STEPHANE HUMBERT LUCAS': 'Stephane Humbert Lucas',
+    'ALEXANDRE J': 'Alexandre J',
+    'ROSENDO MATEU': 'Rosendo Mateu',
+    'MARC-ANTOINE BARROIS': 'Marc-Antoine Barrois',
+    'JEROBOAM': 'Jeroboam',
+    'JOVOY PARIS': 'Jovoy Paris',
+    'TAUER PERFUMES': 'Tauer Perfumes',
+    'FRAGRANCE DU BOIS': 'Fragrance Du Bois',
+    'LABORATORIO OLFATTIVO': 'Laboratorio Olfattivo',
+    'ARABIAN OUD': 'Arabian Oud',
+    'GRAHAM & POTT': 'Graham & Pott',
+    'MILLER HARRIS': 'Miller Harris',
+    'L ARTISAN': 'L’Artisan Parfumeur',
+    'COMME DES GARCONS': 'Comme des Garçons',
+    'MAISON CATALIYA': 'Maison Cataliya',
+    'MAISON REBATCHI': 'Maison Rebatchi',
+    'PARFUMS BDK PARIS': 'Parfums BDK Paris',
+    'PARFUMS MDCI': 'Parfums MDCI',
+    'PARFUMS DUSITA': 'Parfums Dusita',
+    'PARFUMS SOPHISTE': 'Parfums Sophiste',
+    'THE HARMONIST': 'The Harmonist',
+    'THE GATE': 'The Gate',
+    'EMPORIO ARMANI': 'Emporio Armani',
+    'DRIES VAN NOTEN': 'Dries Van Noten',
+    'GIANFRANCO FERRE': 'Gianfranco Ferré',
+    'LORENZO VILLORESI': 'Lorenzo Villoresi',
+    'FRANCESCA DELL ORO': 'Francesca Dell’Oro',
+    'ELIE SAAB': 'Elie Saab',
+    'JOHN VARVATOS': 'John Varvatos',
+    'J-SCENT': 'J-Scent',
+    'NINA RICCI': 'Nina Ricci',
+    'VICTORIA S SECRET': 'Victoria’s Secret',
+    'ZADIG & VOLTAIRE': 'Zadig & Voltaire',
+    'MONCLER': 'Moncler',
+    'COURREGES': 'Courrèges',
+    'MENDITTOROSA': 'Mendittorosa',
+    'BINET-PAPILLON': 'Binet-Papillon',
+    'CHRISTIAN DIOR': 'CHRISTIAN DIOR',
+    'CHRISTIAN LOUBOUTIN': 'CHRISTIAN LOUBOUTIN',
+    'MAISON FRANCIS KURKDJIAN': 'MAISON FRANCIS KURKDJIAN',
+    'MAISON CRIVELLI': 'MAISON CRIVELLI',
+    'MAISON TAHITE': 'MAISON TAHITE',
+    'MAISON MARTIN MARGIELA': 'MAISON MARTIN MARGIELA',
+    'MAISON VIOLET': 'MAISON VIOLET',
+    'MAISON CATALIYA': 'MAISON CATALIYA',
+    'MAISON REBATCHI': 'MAISON REBATCHI',
+    'THE DIFFERENT COMPANY': 'THE DIFFERENT COMPANY',
+    'THE MERCHANT OF VENICE': 'THE MERCHANT OF VENICE',
+    'THE WOODS COLLECTION': 'THE WOODS COLLECTION',
+    'THE HARMONIST': 'THE HARMONIST',
+    'THE HOUSE OF OUD': 'THE HOUSE OF OUD',
+    'THE GATE': 'THE GATE',
+    'PARFUMS DE MARLY': 'PARFUMS DE MARLY',
+    'PARFUMS BDK PARIS': 'PARFUMS BDK PARIS',
+    'PARFUMS ET SENTEURS DU PAYS': 'PARFUMS ET SENTEURS DU PAYS',
+    'PARFUMS MDCI': 'PARFUMS MDCI',
+    'PARFUMS DE NICOLAI': 'PARFUMS DE NICOLAI',
+    'PARFUMS DUSITA': 'PARFUMS DUSITA',
+    'PARFUMS SOPHISTE': 'PARFUMS SOPHISTE',
+    'PARFUMS 137': 'PARFUMS 137',
+    'LES LIQUIDES IMAGINAIRES': 'LES LIQUIDES IMAGINAIRES',
+    'LES EAUX PRIMORDIALES': 'LES EAUX PRIMORDIALES',
+    'LES SOEURS DE NOE': 'LES SOEURS DE NOE',
+    'LES FLEURS DE BACH': 'LES FLEURS DE BACH',
+    'LES BAINS GUERBOIS': 'LES BAINS GUERBOIS',
+    'LES CONTES D ORIENT': 'LES CONTES D ORIENT',
+    'LES COPAINS': 'LES COPAINS',
+    'LES DESTINATIONS': 'LES DESTINATIONS',
+    'PIERRE GUILLAUME': 'PIERRE GUILLAUME',
+    'PIERRE BALMAIN': 'PIERRE BALMAIN',
+    'PIERRE CARDIN': 'PIERRE CARDIN',
+    'FRENCH AVENUE': 'FRENCH AVENUE',
+    'AL HARAMAIN': 'AL HARAMAIN',
+    'AL JAZEERA': 'AL JAZEERA',
+    'AL ATTAAR': 'AL ATTAAR',
+    'ATELIER COLOGNE': 'ATELIER COLOGNE',
+    'ATELIER DES ORS': 'ATELIER DES ORS',
+    'ATELIER FLOU': 'ATELIER FLOU',
+    'ATELIER MATERI': 'ATELIER MATERI',
+    'EX NIHILO': 'EX NIHILO',
+    'LE LABO': 'LE LABO',
+    'LE BONHEUR': 'LE BONHEUR',
+    'LE GALION': 'LE GALION',
+    'LA SULTANE DE SABA': 'LA SULTANE DE SABA',
+    'LA MAISON DE LA VANILLE': 'LA MAISON DE LA VANILLE',
+    'LA MANUFACTURE': 'LA MANUFACTURE',
+    'LA BOUCHE ROUGE': 'LA BOUCHE ROUGE',
+    'HOUSE OF BRANDT': 'HOUSE OF BRANDT',
+    'M.INT': 'M.INT',
+    'V CANTO': 'V CANTO',
+    'HAUTE FRAGRANCE COMPANY': 'HAUTE FRAGRANCE COMPANY',
+    '12 PARFUMEURS FRANCAIS': '12 PARFUMEURS FRANCAIS',
+    'TOM FORD': 'TOM FORD',
+    'GIORGIO ARMANI': 'GIORGIO ARMANI',
+    'DOLCE & GABBANA': 'DOLCE & GABBANA',
+    'CAROLINA HERRERA': 'CAROLINA HERRERA',
+    'CALVIN KLEIN': 'CALVIN KLEIN',
+    'PACO RABANNE': 'PACO RABANNE',
+    'HUGO BOSS': 'HUGO BOSS',
+    'JIMMY CHOO': 'JIMMY CHOO',
+    'JEAN PAUL GAULTIER': 'JEAN PAUL GAULTIER',
+    'RALPH LAUREN': 'RALPH LAUREN',
+    'ELIZABETH ARDEN': 'ELIZABETH ARDEN',
+    'SALVATORE FERRAGAMO': 'SALVATORE FERRAGAMO',
+    'THIERRY MUGLER': 'THIERRY MUGLER',
+    'NARCISO RODRIGUEZ': 'NARCISO RODRIGUEZ',
+    'ESTEE LAUDER': 'ESTEE LAUDER',
+    'MICHAEL KORS': 'MICHAEL KORS',
+    'VIKTOR & ROLF': 'VIKTOR & ROLF',
+    'ISSEY MIYAKE': 'ISSEY MIYAKE',
+    'FRANCK BOCLET': 'FRANCK BOCLET',
+    'FREDERIC MALLE': 'FREDERIC MALLE',
+    'CLAUDE ANDRIE': 'CLAUDE ANDRIE',
+    'JULIETTE HAS A GUN': 'JULIETTE HAS A GUN',
+    'MARC-ANTOINE BARROIS': 'MARC-ANTOINE BARROIS',
+    'MARC ANTOINE BARROIS': 'MARC ANTOINE BARROIS',
+    'LOUIS VUITTON': 'LOUIS VUITTON',
+    'SERGE LUTENS': 'SERGE LUTENS',
+    'MEMO PARIS': 'MEMO PARIS',
+    'HISTOIRES DE PARFUMS': 'HISTOIRES DE PARFUMS',
+    'COMPTOIR SUD PACIFIQUE': 'COMPTOIR SUD PACIFIQUE',
+    'ETAT LIBRE D ORANGE': 'ETAT LIBRE D ORANGE',
+    'ELECTIMUSS': 'ELECTIMUSS',
+    'MONTBLANC': 'MONTBLANC',
+    'DIPTYQUE': 'DIPTYQUE',
+    'PENHALIGONS': 'PENHALIGONS',
+    'BYREDO': 'BYREDO',
+    'XERJOFF': 'XERJOFF',
+    'AMOUAGE': 'AMOUAGE',
+    'VERSACE': 'VERSACE',
+    'CHANEL': 'CHANEL',
+    'GUERLAIN': 'GUERLAIN',
+    'MONTALE': 'MONTALE',
+    'MANCERA': 'MANCERA',
+    'KILIAN': 'KILIAN',
+    'AJMAL': 'AJMAL',
+    'ARMAF': 'ARMAF',
+    'BVLGARI': 'BVLGARI',
+    'GUCCI': 'GUCCI',
+    'GIVENCHY': 'GIVENCHY',
+    'LATTAFA': 'LATTAFA',
+    'ROJA': 'ROJA',
+    'CREED': 'CREED',
+    'PRADA': 'PRADA',
+    'CHLOE': 'CHLOE',
+    'CARTIER': 'CARTIER',
+    'KENZO': 'KENZO',
+    'BURBERRY': 'BURBERRY',
+    'TRUSSARDI': 'TRUSSARDI',
+    'LACOSTE': 'LACOSTE',
+    'NISHANE': 'NISHANE',
+    'INITIO': 'INITIO',
+    'AZZARO': 'AZZARO',
+    'LANCOME': 'LANCOME',
+    'LALIQUE': 'LALIQUE',
+    'ROCHAS': 'ROCHAS',
+    'DAVIDOFF': 'DAVIDOFF',
+    'COACH': 'COACH',
+    'MOSCHINO': 'MOSCHINO',
+    'ESCADA': 'ESCADA',
+    'BOND': 'BOND',
+    'CHOPARD': 'CHOPARD',
+    'ZARKOPERFUME': 'ZARKOPERFUME',
+    'NICOLAI': 'NICOLAI',
+    'FLORAIKU': 'FLORAIKU',
+    'PUREDISTANCE': 'PUREDISTANCE',
+    'BOADICEA': 'BOADICEA',
+    'MIZENSIR': 'MIZENSIR',
+    'MASQUE': 'MASQUE',
+    'VILHELM': 'VILHELM',
+    'FRAGONARD': 'FRAGONARD',
+    'CLIVE CHRISTIAN': 'CLIVE CHRISTIAN',
+    'ATKINSONS': 'ATKINSONS',
+    'ARGOS': 'ARGOS',
+    'MORESQUE': 'MORESQUE',
+    'BORTNIKOFF': 'BORTNIKOFF',
+    'CARON': 'CARON',
+    'COQUILLETE': 'COQUILLETE',
+    'PERRIS': 'PERRIS',
+    'ORLOV': 'ORLOV',
+    'SUPERZ': 'SUPERZ',
+    'ARTEOLFATTO': 'ARTEOLFATTO',
+    'BOUCHERON': 'BOUCHERON',
+    'JUSBOX': 'JUSBOX',
+    'NOBILE': 'NOBILE',
+    'ESSENTIAL': 'ESSENTIAL',
+    'VAN CLEEF & ARPELS': 'VAN CLEEF & ARPELS',
+    'JACQUES FATH': 'JACQUES FATH',
+    'EMANUEL UNGARO': 'EMANUEL UNGARO',
+    'STEFANO RICCI': 'STEFANO RICCI',
+    'ROBERTO CAVALLI': 'ROBERTO CAVALLI',
+    'SARAH BAKER': 'SARAH BAKER',
+    'JENNY GLOW': 'JENNY GLOW',
+    'BANANA REPUBLIC': 'BANANA REPUBLIC',
+    'LENGling': 'LENGLING',
+    'LENGLING': 'LENGLING',
+    'DRIES VAN NOTEN': 'DRIES VAN NOTEN',
+    'OLFACTIVE STUDIO': 'OLFACTIVE STUDIO',
+    'VINCE CAMUTO': 'VINCE CAMUTO',
+    'AMOUROUD': 'AMOUROUD',
+    'REINE DE SABA': 'REINE DE SABA',
+    'ANFAS': 'ANFAS',
+    'EMPORIO ARMANI': 'EMPORIO ARMANI',
+    'GIARDINO SEGRETO': 'GIARDINO SEGRETO',
+    'REGALIEN': 'REGALIEN',
+    'ZIMAYA': 'ZIMAYA',
+    'ALGHABRA': 'ALGHABRA',
+    'OLIBANUM': 'OLIBANUM',
+    'THEODOROS KALOTINIS': 'THEODOROS KALOTINIS',
+    'BYBOZO': 'BYBOZO',
+    'FRANCESCA DELL ORO': 'FRANCESCA DELL ORO',
+    'ILLUMINUM': 'ILLUMINUM',
+    'PARLE MOI DE PARFUM': 'PARLE MOI DE PARFUM',
+    'SALVADOR DALI': 'SALVADOR DALI',
+    'GUESS': 'GUESS',
+    'ATTAR COLLECTION': 'ATTAR COLLECTION',
+    'KENNETH COLE': 'KENNETH COLE',
+    'COSTUME NATIONAL': 'COSTUME NATIONAL',
+    'ESCENTRIC MOLECULES': 'ESCENTRIC MOLECULES',
+    'POLICE': 'POLICE',
+    'DUNHILL': 'DUNHILL',
+    'LOEWE': 'LOEWE',
+    'MATIERE PREMIERE': 'MATIERE PREMIERE',
+    'OSCAR DE LA RENTA': 'OSCAR DE LA RENTA',
+    'PATRICE RIVIERE': 'PATRICE RIVIERE',
+    'RASASI': 'RASASI',
+    'RICHARD': 'RICHARD',
+    'RANCE': 'RANCE',
+    'MILLER HARRIS': 'MILLER HARRIS',
+    'STEPHANIE DE BRUIJN': 'STEPHANIE DE BRUIJN',
+    'AREEJ AL AMEER': 'AREEJ AL AMEER',
+    'LM PARFUMS': 'LM PARFUMS',
+    'ARD AL ZAAFARAN': 'ARD AL ZAAFARAN',
+    'GRAHAM & POTT': 'GRAHAM & POTT',
+    'ELLA K': 'ELLA K',
+    'DAVID JOURQUIN': 'DAVID JOURQUIN',
+    'GIANFRANCO FERRE': 'GIANFRANCO FERRE',
+    'LORENZO VILLORESI': 'LORENZO VILLORESI',
+    'GGEMA': 'GGEMA',
+    'EMPEROR': 'EMPEROR',
+    'JUL': 'JUL',
+    'NINA RICCI': 'NINA RICCI',
+    'WELTON LONDON': 'WELTON LONDON',
+}
+
+def canonical_token(token: str) -> str:
+    # Ignore punctuation differences such as DR. / DR and apostrophes.
+    return re.sub(r"[^A-Z0-9À-ÿА-Яа-яЁё]", "", str(token).upper())
+
 def word_tokens(text: str) -> List[str]:
-    return re.findall(r"[A-Za-z0-9À-ÿА-Яа-яЁё'&-]+", str(text or "").upper())
+    return re.findall(r"[A-Za-z0-9À-ÿА-Яа-яЁё&'\-]+", str(text or "").upper())
 
-
-TOKENIZED_NAMES = [word_tokens(p.get("name", "")) for p in PRODUCTS]
-PREFIX_COUNTS: Dict[int, Dict[str, int]] = {1: {}, 2: {}, 3: {}, 4: {}}
-PREFIX_NEXT: Dict[int, Dict[str, set]] = {1: {}, 2: {}, 3: {}, 4: {}}
-for tokens in TOKENIZED_NAMES:
-    for k in range(1, min(4, len(tokens)) + 1):
-        key = " ".join(tokens[:k])
-        PREFIX_COUNTS[k][key] = PREFIX_COUNTS[k].get(key, 0) + 1
-        if len(tokens) > k:
-            PREFIX_NEXT[k].setdefault(key, set()).add(tokens[k])
-
+PREFIX_ITEMS = sorted(
+    [(tuple(canonical_token(x) for x in k.split()), v) for k, v in BRAND_PREFIXES.items()],
+    key=lambda item: -len(item[0])
+)
 
 def detect_brand(name: str) -> str:
     tokens = word_tokens(name)
     if not tokens:
         return "UNKNOWN"
-    chosen = tokens[0]
-    parent_count = PREFIX_COUNTS[1].get(chosen, 1)
-    for k in range(2, min(4, len(tokens)) + 1):
-        pref = " ".join(tokens[:k])
-        count = PREFIX_COUNTS[k].get(pref, 0)
-        # A real brand prefix usually covers a substantial share of its parent
-        # and has multiple different product names following it.
-        if count >= max(2, int(parent_count * 0.35)) and len(PREFIX_NEXT[k].get(pref, set())) > 1:
-            chosen = pref
-            parent_count = count
-    return chosen
-
+    canon = tuple(canonical_token(x) for x in tokens)
+    for prefix, display in PREFIX_ITEMS:
+        if len(canon) >= len(prefix) and canon[:len(prefix)] == prefix:
+            return display
+    return tokens[0]
 
 BRAND_FOR_ID: Dict[str, str] = {}
 BRAND_DISPLAY: Dict[str, str] = {}
@@ -176,6 +441,10 @@ for p in PRODUCTS:
     key = detect_brand(p.get("name", ""))
     BRAND_FOR_ID[p["id"]] = key
     BRAND_DISPLAY.setdefault(key, key.title())
+
+# Client-facing catalog only: a brand is listed when it has at least one
+# normal perfume fragrance after the variant filter.
+
 
 BRANDS: Dict[str, List[dict]] = {}
 for p in PRODUCTS:
@@ -444,8 +713,24 @@ async def edit_or_replace(message, text, reply_markup=None):
     return await message.edit_text(text, reply_markup=reply_markup)
 
 
+def brand_key_from_query(query: str):
+    q = norm(query).replace("’", "'")
+    # Exact match against the client-facing brand names/keys.
+    for key in BRAND_KEYS:
+        if q == norm(BRAND_DISPLAY[key]).replace("’", "'") or q == norm(key).replace("’", "'"):
+            return key
+    return None
+
+
 async def show_search_results(target_message, user_id: int, page: int = 0):
     query = USER_SEARCH.get(user_id, "")
+    exact_brand = brand_key_from_query(query)
+    if exact_brand is not None and page == 0:
+        brand_id = BRAND_KEY_TO_ID[exact_brand]
+        total = len(BRAND_GROUPS[exact_brand])
+        text = f"<b>{BRAND_DISPLAY[exact_brand]}</b>\n\nАроматов: <b>{total}</b>\nВыберите аромат:"
+        await edit_or_replace(target_message, text, brand_products_kb(brand_id, 0))
+        return
     matches, items = search_results(query, page)
     if not matches:
         await edit_or_replace(target_message, f'🔎 По запросу «{query}» ничего не найдено.\n\nПопробуйте название бренда или аромата.', back_home_kb())
@@ -482,7 +767,8 @@ async def home(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "catalog")
 async def catalog(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    text = f"🛍 <b>Каталог PARFERA</b>\n\nВ каталоге <b>{len(PRODUCTS):,}</b> позиций.\nБрендов: <b>{len(BRAND_KEYS)}</b>\n\nВыберите бренд:"
+    visible_groups_total = sum(len(v) for v in BRAND_GROUPS.values())
+    text = f"🛍 <b>Каталог PARFERA</b>\n\nАроматов: <b>{visible_groups_total}</b>\nБрендов: <b>{len(BRAND_KEYS)}</b>\n\nВыберите бренд:"
     await edit_or_replace(callback.message, text, brands_kb(0))
     await callback.answer()
 
@@ -490,7 +776,7 @@ async def catalog(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("brands:"))
 async def brands_page(callback: CallbackQuery):
     page = int(callback.data.split(":")[1])
-    text = f"🛍 <b>Бренды PARFERA</b>\n\nВсего брендов: <b>{len(BRAND_KEYS)}</b>\nВыберите бренд:"
+    text = f"🛍 <b>Бренды PARFERA</b>\n\nДоступно брендов: <b>{len(BRAND_KEYS)}</b>\n\nВыберите бренд:"
     await edit_or_replace(callback.message, text, brands_kb(page))
     await callback.answer()
 
@@ -512,7 +798,7 @@ async def brand_page(callback: CallbackQuery):
 @dp.callback_query(F.data.in_({"search", "catalog_search"}))
 async def search(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SearchState.waiting)
-    await edit_or_replace(callback.message, "🔎 <b>Поиск по каталогу</b>\n\nВведите название бренда, аромата или артикул.\n\nНапример: <b>Versace Eros</b>, <b>Erba Pura</b> или <b>000-002</b>.", back_home_kb())
+    await edit_or_replace(callback.message, "🔎 <b>Поиск по каталогу</b>\n\nВведите бренд, название аромата или артикул.\n\nНапример: <b>Versace Eros</b>, <b>Erba Pura</b> или <b>000-002</b>.", back_home_kb())
     await callback.answer()
 
 
@@ -524,6 +810,12 @@ async def do_search(message: Message, state: FSMContext):
         return
     USER_SEARCH[message.from_user.id] = query
     await state.clear()
+    exact_brand = brand_key_from_query(query)
+    if exact_brand is not None:
+        brand_id = BRAND_KEY_TO_ID[exact_brand]
+        total = len(BRAND_GROUPS[exact_brand])
+        await message.answer(f"<b>{BRAND_DISPLAY[exact_brand]}</b>\n\nАроматов: <b>{total}</b>\nВыберите аромат:", reply_markup=brand_products_kb(brand_id, 0))
+        return
     matches, items = search_results(query, 0)
     if not matches:
         await message.answer(f'🔎 По запросу «{query}» ничего не найдено.\n\nПопробуйте более короткий запрос.', reply_markup=back_home_kb())
