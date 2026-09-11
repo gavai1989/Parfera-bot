@@ -44,6 +44,28 @@ def display_name(p):
     return clean_product_name(p.get("name", ""))
 
 
+def fragrance_title(p):
+    """Compact customer-facing title: fragrance + concentration."""
+    raw = clean_product_name(p.get("name", ""))
+    brand = BRAND_DISPLAY.get(BRAND_FOR_ID.get(p.get("id"), ""), "") if "BRAND_FOR_ID" in globals() else ""
+    if brand:
+        raw = re.sub(r"^" + re.escape(brand) + r"\s+", "", raw, flags=re.I)
+    raw = re.sub(r"\s+TESTER\b", "", raw, flags=re.I)
+    raw = re.sub(r"\s+(?:без крышки|с крышкой|пробник)\b", "", raw, flags=re.I)
+    raw = re.sub(r"\s+\d+(?:[.,]\d+)?\s*ml\b", "", raw, flags=re.I)
+    raw = re.sub(r"\s*\((?:m|w|u)\)\b", "", raw, flags=re.I)
+    raw = re.sub(r"\s*\+.*$", "", raw)
+    raw = re.sub(r"\s+", " ", raw).strip(" -·")
+    m = re.search(r"\b(edp|edt|parfum|parfume|extrait|eau de parfum|eau de toilette)\b", raw, re.I)
+    concentration = None
+    if m:
+        concentration = m.group(1).upper().replace("PARFUME", "PARFUM")
+        raw = (raw[:m.start()] + raw[m.end():]).strip(" -·")
+    if not raw:
+        raw = display_name(p)
+    return f"{raw} · {concentration}" if concentration else raw
+
+
 def group_key(p):
     # Group one fragrance into one card. Volume, TESTER and supplier condition
     # markers are variants, not separate fragrances. Concentration (EDT/EDP/EDP
@@ -450,7 +472,16 @@ BRANDS: Dict[str, List[dict]] = {}
 for p in PRODUCTS:
     BRANDS.setdefault(BRAND_FOR_ID[p["id"]], []).append(p)
 
-BRAND_KEYS = sorted(BRANDS.keys(), key=lambda x: BRAND_DISPLAY[x].lower())
+def valid_brand_key(key: str) -> bool:
+    label = BRAND_DISPLAY.get(key, key).strip()
+    letters = re.sub(r"[^A-Za-zА-Яа-яЁё]", "", label)
+    if len(letters) < 2:
+        return False
+    if not re.search(r"[A-Za-zА-Яа-яЁё]", label):
+        return False
+    return True
+
+BRAND_KEYS = sorted([k for k in BRANDS if valid_brand_key(k)], key=lambda x: BRAND_DISPLAY[x].lower())
 BRAND_ID_TO_KEY = {str(i): key for i, key in enumerate(BRAND_KEYS)}
 BRAND_KEY_TO_ID = {key: str(i) for i, key in enumerate(BRAND_KEYS)}
 
@@ -582,6 +613,23 @@ def product_kb(pid, brand_id=None, brand_page=0):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def gender_results(gender: str, page: int = 0):
+    matches = []
+    seen = set()
+    for p in PRODUCTS:
+        if not variant_is_client_friendly(p):
+            continue
+        raw = str(p.get("name", ""))
+        ok = re.search(rf"\({gender}\)", raw, re.I) if gender != "u" else not re.search(r"\((?:m|w)\)", raw, re.I)
+        if ok:
+            gk = group_key(p)
+            if gk not in seen:
+                seen.add(gk); matches.append(p)
+    matches.sort(key=lambda p: fragrance_title(p).lower())
+    start = page * PAGE_SIZE
+    return matches, matches[start:start + PAGE_SIZE]
+
+
 def search_results(query: str, page: int = 0):
     words = [w for w in norm(query).split() if w]
     raw = [p for p in PRODUCTS if variant_is_client_friendly(p) and all(w in SEARCH_TEXT[p["id"]] for w in words)]
@@ -601,7 +649,7 @@ def search_results(query: str, page: int = 0):
 def results_kb(items: List[dict], page: int, total: int):
     rows = []
     for p in items:
-        title = display_name(p)
+        title = fragrance_title(p)
         if len(title) > 48:
             title = title[:45] + "…"
         price = lowest_group_price(visible_group(p))
@@ -622,14 +670,17 @@ def results_kb(items: List[dict], page: int, total: int):
 
 
 def brands_kb(page: int = 0):
-    per_page = 20
+    per_page = 15
     start = page * per_page
     keys = BRAND_KEYS[start:start + per_page]
     rows = []
     for key in keys:
         bid = BRAND_KEY_TO_ID[key]
         count = len(BRAND_GROUPS[key])
-        rows.append([InlineKeyboardButton(text=f"{BRAND_DISPLAY[key]} · {count}", callback_data=f"brand:{bid}:0")])
+        label = BRAND_DISPLAY[key]
+        if len(label) > 28:
+            label = label[:25] + "…"
+        rows.append([InlineKeyboardButton(text=f"{label} · {count}", callback_data=f"brand:{bid}:0")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"brands:{page-1}"))
@@ -640,7 +691,47 @@ def brands_kb(page: int = 0):
     rows += [
         [InlineKeyboardButton(text="🔎 Найти аромат", callback_data="search")],
         [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")],
+        [InlineKeyboardButton(text="← В каталог", callback_data="catalog")],
         [InlineKeyboardButton(text="← Главное меню", callback_data="home")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+POPULAR_BRANDS = [
+    "versace", "chanel", "christian dior", "dior", "xerjoff", "amouage", "tom ford",
+    "giorgio armani", "dolce & gabbana", "carolina herrera", "yves saint laurent",
+    "narciso rodriguez", "jo malone", "byredo", "le labo", "maison francis kurkdjian",
+    "parfums de marly", "creed", "initio", "montale", "mancera", "memo paris", "kilian"
+]
+DESIGNER_BRANDS = [
+    "versace", "chanel", "christian dior", "dior", "giorgio armani", "dolce & gabbana",
+    "carolina herrera", "calvin klein", "paco rabanne", "hugo boss", "jean paul gaultier",
+    "ralph lauren", "elizabeth arden", "salvatore ferragamo", "thierry mugler",
+    "narciso rodriguez", "michael kors", "viktor & rolf", "issey miyake", "marc jacobs",
+    "nina ricci", "elie saab", "john varvatos", "moncler", "zadig & voltaire", "courreges"
+]
+NICHE_BRANDS = [
+    "xerjoff", "amouage", "parfums de marly", "maison francis kurkdjian", "initio",
+    "creed", "byredo", "le labo", "memo paris", "kilian", "montale", "mancera",
+    "atelier des ors", "ex nihilo", "frederic malle", "juliette has a gun", "serge lutens",
+    "histoires de parfums", "etat libre d'orange", "les liquides imaginaires",
+    "les eaux primordiales", "pierre guillaume", "tauer perfumes", "fragrance du bois",
+    "laboratorio olfattivo", "arabian oud"
+]
+
+def _brand_matches(names):
+    wanted = {canonical_token(x) for x in names}
+    return [k for k in BRAND_KEYS if canonical_token(k) in wanted or canonical_token(BRAND_DISPLAY[k]) in wanted]
+
+def category_kb(kind: str):
+    names = {"popular": POPULAR_BRANDS, "niche": NICHE_BRANDS, "designer": DESIGNER_BRANDS}.get(kind, [])
+    keys = _brand_matches(names)
+    rows = [[InlineKeyboardButton(text=f"{BRAND_DISPLAY[k]} · {len(BRAND_GROUPS[k])}", callback_data=f"brand:{BRAND_KEY_TO_ID[k]}:0")] for k in keys]
+    rows += [
+        [InlineKeyboardButton(text="🔤 Все бренды", callback_data="brands:0")],
+        [InlineKeyboardButton(text="🔎 Найти аромат", callback_data="search")],
+        [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")],
+        [InlineKeyboardButton(text="← Каталог", callback_data="catalog")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -654,7 +745,7 @@ def brand_products_kb(brand_id: str, page: int = 0):
     rows = []
     for group in items:
         p = group[0]
-        title = display_name(p)
+        title = fragrance_title(p)
         if len(title) > 44:
             title = title[:41] + "…"
         price = lowest_group_price(group)
@@ -724,6 +815,12 @@ def brand_key_from_query(query: str):
 
 async def show_search_results(target_message, user_id: int, page: int = 0):
     query = USER_SEARCH.get(user_id, "")
+    if query.startswith("__gender__:"):
+        gender = query.split(":", 1)[1]
+        matches, items = gender_results(gender, page)
+        title = "👩 Для неё" if gender == "w" else "👨 Для него" if gender == "m" else "⚪ Унисекс"
+        await edit_or_replace(target_message, f"<b>{title}</b>\n\nНайдено ароматов: <b>{len(matches)}</b>", results_kb(items, page, len(matches)))
+        return
     exact_brand = brand_key_from_query(query)
     if exact_brand is not None and page == 0:
         brand_id = BRAND_KEY_TO_ID[exact_brand]
@@ -768,9 +865,38 @@ async def home(callback: CallbackQuery, state: FSMContext):
 async def catalog(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     visible_groups_total = sum(len(v) for v in BRAND_GROUPS.values())
-    text = f"🛍 <b>Каталог PARFERA</b>\n\nАроматов: <b>{visible_groups_total}</b>\nБрендов: <b>{len(BRAND_KEYS)}</b>\n\nВыберите бренд:"
-    await edit_or_replace(callback.message, text, brands_kb(0))
+    text = f"🛍 <b>Каталог PARFERA</b>\n\nАроматов: <b>{visible_groups_total}</b> · Брендов: <b>{len(BRAND_KEYS)}</b>\n\nВыберите раздел:"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐ Популярные бренды", callback_data="cat:popular")],
+        [InlineKeyboardButton(text="💎 Нишевая парфюмерия", callback_data="cat:niche")],
+        [InlineKeyboardButton(text="✨ Дизайнерские бренды", callback_data="cat:designer")],
+        [InlineKeyboardButton(text="👩 Для неё", callback_data="cat:w")],
+        [InlineKeyboardButton(text="👨 Для него", callback_data="cat:m")],
+        [InlineKeyboardButton(text="⚪ Унисекс", callback_data="cat:u")],
+        [InlineKeyboardButton(text="🔤 Все бренды", callback_data="brands:0")],
+        [InlineKeyboardButton(text="🔎 Найти аромат", callback_data="search")],
+        [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")],
+        [InlineKeyboardButton(text="← Главное меню", callback_data="home")],
+    ])
+    await edit_or_replace(callback.message, text, kb)
     await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("cat:"))
+async def catalog_category(callback: CallbackQuery):
+    kind = callback.data.split(":", 1)[1]
+    if kind in {"popular", "niche", "designer"}:
+        titles = {"popular": "⭐ Популярные бренды", "niche": "💎 Нишевая парфюмерия", "designer": "✨ Дизайнерские бренды"}
+        await edit_or_replace(callback.message, f"<b>{titles[kind]}</b>\n\nВыберите бренд:", category_kb(kind))
+        await callback.answer()
+        return
+    gender = {"w": "w", "m": "m", "u": "u"}.get(kind)
+    if gender:
+        matches, _ = gender_results(gender, 0)
+        USER_SEARCH[callback.from_user.id] = f"__gender__:{gender}"
+        title = "👩 Для неё" if gender == "w" else "👨 Для него" if gender == "m" else "⚪ Унисекс"
+        await edit_or_replace(callback.message, f"<b>{title}</b>\n\nНайдено ароматов: <b>{len(matches)}</b>", results_kb(matches[:PAGE_SIZE], 0, len(matches)))
+        await callback.answer()
 
 
 @dp.callback_query(F.data.startswith("brands:"))
