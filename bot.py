@@ -7,7 +7,7 @@ from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, StateFilter
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.state import State, StatesGroup
@@ -1105,7 +1105,7 @@ async def ai_back(callback: CallbackQuery):
     await callback.answer()
 
 
-@dp.message(F.text)
+@dp.message(StateFilter(None), F.text)
 async def ai_free_text(message: Message, state: FSMContext):
     # SearchState has its own handler above; this handler is for ordinary messages from the main screen.
     current = await state.get_state()
