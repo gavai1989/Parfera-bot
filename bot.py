@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 import re
-from typing import Dict, List
+from typing import Dict, List, Tuple, Optional
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
@@ -13,9 +13,17 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
+try:
+    from openai import AsyncOpenAI
+except ImportError:
+    AsyncOpenAI = None
+
 TOKEN = os.environ.get("PARFERA_BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("Не задан PARFERA_BOT_TOKEN")
+OPENAI_API_KEY = os.environ.get("PARFERA_OPENAI_API_KEY")
+OPENAI_MODEL = os.environ.get("PARFERA_OPENAI_MODEL", "gpt-5.6-luna")
+OPENAI_CLIENT = AsyncOpenAI(api_key=OPENAI_API_KEY) if (OPENAI_API_KEY and AsyncOpenAI) else None
 
 with open("catalog.json", encoding="utf-8") as f:
     PRODUCTS = json.load(f)["products"]
@@ -528,6 +536,156 @@ for group_name, filename in IMAGE_MAP.items():
         p["image_url"] = os.path.join("images", filename)
 
 
+AI_HISTORY: Dict[int, List[dict]] = {}
+AI_LAST_RESULTS: Dict[int, List[str]] = {}
+AI_MAX_HISTORY = 8
+
+AI_SYSTEM_PROMPT = """
+Ты — PARFERA AI, помощник магазина оригинальной парфюмерии PARFERA.
+Твоя задача — помочь клиенту найти реальные позиции из каталога и кратко объяснить выбор.
+КРИТИЧЕСКИ ВАЖНО:
+- Никогда не придумывай товар, цену, объём или наличие.
+- Используй только товары, которые вернул инструмент search_catalog.
+- Если инструмент ничего не нашёл — честно скажи это и предложи изменить запрос.
+- Если клиент спрашивает о похожем аромате, подбирай только из найденных реальных позиций; не утверждай точную схожесть, если у тебя нет данных о нотах.
+- Можно задавать один короткий уточняющий вопрос, если без него поиск сильно неоднозначен.
+- Отвечай на русском, дружелюбно и премиально, без длинных вступлений.
+- Показывай название, концентрацию, объём и цену только из результатов инструмента.
+- Если найдено несколько вариантов, перечисляй их компактно и предлагай открыть карточку.
+"""
+
+
+def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_price: Optional[int] = None,
+                        volume: Optional[int] = None, limit: int = 8) -> List[dict]:
+    """Deterministic catalog search used by PARFERA AI. It never invents inventory."""
+    q = norm(query)
+    words = [w for w in q.split() if len(w) > 1]
+    brand_q = norm(brand)
+    gender_q = gender.lower().strip()
+    candidates = []
+    seen = set()
+    for p in PRODUCTS:
+        if not variant_is_client_friendly(p):
+            continue
+        raw = norm(p.get("name", ""))
+        bkey = BRAND_FOR_ID.get(p.get("id"), "")
+        blabel = norm(BRAND_DISPLAY.get(bkey, bkey))
+        if brand_q and brand_q not in blabel and brand_q not in raw:
+            continue
+        if gender_q in {"m", "male", "м", "мужской"} and not re.search(r"\(m\)", raw, re.I):
+            continue
+        if gender_q in {"w", "female", "ж", "женский"} and not re.search(r"\(w\)", raw, re.I):
+            continue
+        if gender_q in {"u", "unisex", "унисекс"} and re.search(r"\((?:m|w)\)", raw, re.I):
+            continue
+        if volume is not None:
+            m = re.search(r"(\d+(?:[.,]\d+)?)\s*ml", raw, re.I)
+            if not m or int(float(m.group(1).replace(",", "."))) != int(volume):
+                continue
+        prices = []
+        if p.get("bottle_price_rub"):
+            prices.append(int(p["bottle_price_rub"]))
+        if p.get("tester_price_rub"):
+            prices.append(int(p["tester_price_rub"]))
+        if max_price is not None and (not prices or min(prices) > int(max_price)):
+            continue
+        if words and not all(w in raw or w in SEARCH_TEXT.get(p["id"], "") for w in words):
+            # Also allow brand-token matching for natural phrases.
+            if not all(w in blabel for w in words):
+                continue
+        gk = group_key(p)
+        if gk in seen:
+            continue
+        seen.add(gk)
+        # Prefer bottle over tester for the representative row.
+        group = unique_variants(visible_group(p))
+        rep = next((x for x in group if x.get("bottle_price_rub")), p)
+        candidates.append(rep)
+    candidates.sort(key=lambda x: (min([int(x.get("bottle_price_rub") or 10**9), int(x.get("tester_price_rub") or 10**9)]), fragrance_title(x).lower()))
+    return candidates[:max(1, min(int(limit or 8), 12))]
+
+
+def ai_tool_result(candidates: List[dict]) -> dict:
+    out = []
+    for p in candidates:
+        prices = []
+        if p.get("bottle_price_rub"):
+            prices.append(f"флакон {p.get('volume','')} — {rub(p['bottle_price_rub'])}")
+        if p.get("tester_price_rub"):
+            prices.append(f"тестер {p.get('volume','')} — {rub(p['tester_price_rub'])}")
+        out.append({
+            "id": p["id"],
+            "brand": BRAND_DISPLAY.get(BRAND_FOR_ID.get(p["id"], ""), ""),
+            "name": fragrance_title(p),
+            "supplier_name": p.get("name", ""),
+            "prices": prices,
+            "gender": "мужской" if re.search(r"\(m\)", p.get("name", ""), re.I) else "женский" if re.search(r"\(w\)", p.get("name", ""), re.I) else "унисекс"
+        })
+    return {"count": len(out), "items": out}
+
+
+async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
+    """Run a short Responses API conversation with a deterministic catalog tool."""
+    if OPENAI_CLIENT is None:
+        return ("🤖 <b>Умный помощник пока не подключён.</b>\n\nНо поиск по каталогу уже работает. Нажмите «🔎 Поиск» или напишите название бренда/аромата.", [])
+
+    history = AI_HISTORY.setdefault(uid, [])
+    history.append({"role": "user", "content": user_text})
+    history[:] = history[-AI_MAX_HISTORY:]
+
+    tool = {
+        "type": "function",
+        "name": "search_catalog",
+        "description": "Найти реальные позиции в каталоге PARFERA. Используй этот инструмент перед рекомендацией товаров.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Название бренда, аромата или ключевые слова из запроса"},
+                "brand": {"type": "string", "description": "Бренд, если явно указан"},
+                "gender": {"type": "string", "enum": ["", "m", "w", "u"], "description": "m мужской, w женский, u унисекс"},
+                "max_price": {"type": ["integer", "null"], "description": "Максимальная цена в рублях, если клиент её указал"},
+                "volume": {"type": ["integer", "null"], "description": "Желаемый объём в мл, если указан"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 12}
+            },
+            "required": ["query", "brand", "gender", "max_price", "volume", "limit"],
+            "additionalProperties": False
+        }
+    }
+
+    input_items = [{"role": "system", "content": AI_SYSTEM_PROMPT}] + history
+    final_text = ""
+    collected: List[dict] = []
+    for _ in range(3):
+        response = await OPENAI_CLIENT.responses.create(model=OPENAI_MODEL, input=input_items, tools=[tool])
+        calls = [x for x in response.output if getattr(x, "type", "") == "function_call"]
+        if not calls:
+            final_text = response.output_text or "Не удалось сформировать ответ. Попробуйте уточнить запрос."
+            break
+        input_items += response.output
+        for call in calls:
+            try:
+                args = json.loads(call.arguments or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            candidates = ai_candidate_search(
+                query=str(args.get("query") or ""),
+                brand=str(args.get("brand") or ""),
+                gender=str(args.get("gender") or ""),
+                max_price=args.get("max_price"),
+                volume=args.get("volume"),
+                limit=int(args.get("limit") or 8),
+            )
+            collected = candidates
+            payload = json.dumps(ai_tool_result(candidates), ensure_ascii=False)
+            input_items.append({"type": "function_call_output", "call_id": call.call_id, "output": payload})
+    if not final_text:
+        final_text = "Не удалось выполнить поиск. Попробуйте написать бренд или название аромата."
+    history.append({"role": "assistant", "content": final_text})
+    history[:] = history[-AI_MAX_HISTORY:]
+    AI_LAST_RESULTS[uid] = [p["id"] for p in collected]
+    return final_text, collected
+
+
 class SearchState(StatesGroup):
     waiting = State()
 
@@ -537,6 +695,7 @@ dp = Dispatcher()
 
 def home_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 PARFERA AI — подобрать аромат", callback_data="ai_start")],
         [InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog"),
          InlineKeyboardButton(text="🔎 Поиск", callback_data="search")],
         [InlineKeyboardButton(text="⭐ Популярное", callback_data="popular"),
@@ -604,7 +763,9 @@ def product_kb(pid, brand_id=None, brand_page=0):
     if brand_id is None:
         bkey = BRAND_FOR_ID.get(pid)
         brand_id = BRAND_KEY_TO_ID.get(bkey) if bkey else None
-    if brand_id is not None:
+    if brand_id == "ai":
+        rows.append([InlineKeyboardButton(text="← К результатам AI", callback_data="ai_back")])
+    elif brand_id is not None:
         rows.append([InlineKeyboardButton(text="← К товарам бренда", callback_data=f"brand:{brand_id}:{brand_page}")])
     else:
         rows.append([InlineKeyboardButton(text="← К брендам", callback_data="brands:0")])
@@ -851,13 +1012,13 @@ async def send_product(message, p, brand_id=None, brand_page=0):
 @dp.message(CommandStart())
 async def start(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("<b>PARFERA</b>\n\nНишевая парфюмерия и персональный подбор.\n\nВыберите раздел:", reply_markup=home_kb())
+    await message.answer("<b>PARFERA</b>\n\nНишевая парфюмерия и персональный подбор.\n\n💬 <b>Просто напишите, какой аромат вы ищете.</b>\nНапример: «женский сладкий до 7000», «Versace Eros 100 мл» или «что-нибудь похожее на Erba Pura».\n\nВыберите раздел:", reply_markup=home_kb())
 
 
 @dp.callback_query(F.data == "home")
 async def home(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await edit_or_replace(callback.message, "<b>PARFERA</b>\n\nНишевая парфюмерия и персональный подбор.\n\nВыберите раздел:", home_kb())
+    await edit_or_replace(callback.message, "<b>PARFERA</b>\n\nНишевая парфюмерия и персональный подбор.\n\n💬 <b>Просто напишите, какой аромат вы ищете.</b>\nНапример: «женский сладкий до 7000», «Versace Eros 100 мл» или «что-нибудь похожее на Erba Pura».\n\nВыберите раздел:", home_kb())
     await callback.answer()
 
 
@@ -919,6 +1080,53 @@ async def brand_page(callback: CallbackQuery):
     text = f"<b>{title}</b>\n\nАроматов: <b>{total}</b>\nВыберите аромат:"
     await edit_or_replace(callback.message, text, brand_products_kb(brand_id, int(page)))
     await callback.answer()
+
+
+@dp.callback_query(F.data == "ai_start")
+async def ai_start(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await edit_or_replace(callback.message,
+        "💬 <b>PARFERA AI</b>\n\nПросто напишите, что вы ищете — я помогу найти реальные позиции в каталоге PARFERA.\n\nНапример:\n• «Женский сладкий до 7000 ₽»\n• «Versace Eros 100 мл»\n• «Мужской свежий аромат»\n• «Что есть похожее на Erba Pura?»",
+        InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "ai_back")
+async def ai_back(callback: CallbackQuery):
+    uid = callback.from_user.id
+    results = [BY_ID[x] for x in AI_LAST_RESULTS.get(uid, []) if x in BY_ID]
+    if results:
+        rows = [[InlineKeyboardButton(text=f"{fragrance_title(p)[:42]}", callback_data=f"product:{p['id']}:ai:0")] for p in results[:10]]
+        rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
+        rows.append([InlineKeyboardButton(text="← Главное меню", callback_data="home")])
+        await edit_or_replace(callback.message, "💬 <b>Результаты PARFERA AI</b>\n\nВыберите аромат:", InlineKeyboardMarkup(inline_keyboard=rows))
+    else:
+        await edit_or_replace(callback.message, "💬 <b>PARFERA AI</b>\n\nНапишите следующий запрос.", back_home_kb())
+    await callback.answer()
+
+
+@dp.message(F.text)
+async def ai_free_text(message: Message, state: FSMContext):
+    # SearchState has its own handler above; this handler is for ordinary messages from the main screen.
+    current = await state.get_state()
+    if current is not None:
+        return
+    text = (message.text or "").strip()
+    if not text or text.startswith("/"):
+        return
+    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    try:
+        answer, candidates = await ai_assist(message.from_user.id, text)
+    except Exception as e:
+        print(f"PARFERA AI error: {e}")
+        await message.answer("🤖 Сейчас не получилось выполнить умный поиск. Попробуйте ещё раз или воспользуйтесь каталогом.", reply_markup=home_kb())
+        return
+    rows = []
+    for p in candidates[:8]:
+        rows.append([InlineKeyboardButton(text=f"🧴 {fragrance_title(p)[:42]}", callback_data=f"product:{p['id']}:ai:0")])
+    rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
+    rows.append([InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog")])
+    await message.answer(answer, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @dp.callback_query(F.data.in_({"search", "catalog_search"}))

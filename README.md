@@ -1,24 +1,19 @@
-# PARFERA — Telegram shop
+PARFERA Telegram Shop — AI catalog build, 12.09.2026
 
-Render-ready version: full supplier catalog + search.
+Catalog source: актуальный клиентский прайс PARFERA, загруженный 12.09.2026.
+Rows: 25,610.
+Prices are taken directly from the uploaded client price list in RUB.
 
-- 29,434 supplier positions in `catalog.json`
-- Prices converted to RUB at supplier rate 90
-- Search by product name or article
-- 10 catalog/search results per page
-- Telegram webhook is removed automatically before long polling
-- HTTP `/health` endpoint listens on Render's `$PORT`
+Files:
+- bot.py — Telegram bot with PARFERA AI
+- catalog.json — current catalog
+- requirements.txt — dependencies
+- images/ — available product images
 
-## Render
+Environment variables:
+PARFERA_BOT_TOKEN
+PARFERA_OPENAI_API_KEY
+PARFERA_OPENAI_MODEL (optional, default gpt-5.6-luna)
 
-Build command:
-`pip install -r requirements.txt`
-
-Start command:
-`python bot.py`
-
-Environment variable:
-`PARFERA_BOT_TOKEN`
-
-Optional Render Health Check Path:
-`/health`
+Start:
+python bot.py
