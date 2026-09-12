@@ -739,7 +739,7 @@ def product_text(p):
     return "\n".join(lines)
 
 
-def product_kb(pid, brand_id=None, brand_page=0):
+def product_kb(pid, brand_id=None, brand_page=0, gender=None):
     group = unique_variants(visible_group(pid))
     rows = []
     option_rows = []
@@ -766,7 +766,7 @@ def product_kb(pid, brand_id=None, brand_page=0):
     if brand_id == "ai":
         rows.append([InlineKeyboardButton(text="← К результатам AI", callback_data="ai_back")])
     elif brand_id is not None:
-        rows.append([InlineKeyboardButton(text="← К товарам бренда", callback_data=f"brand:{brand_id}:{brand_page}")])
+        rows.append([InlineKeyboardButton(text="← К товарам бренда", callback_data=(f"gbrand:{gender}:{brand_id}:{brand_page}" if gender else f"brand:{brand_id}:{brand_page}"))])
     else:
         rows.append([InlineKeyboardButton(text="← К брендам", callback_data="brands:0")])
     rows.append([InlineKeyboardButton(text="🔎 Новый поиск", callback_data="search")])
@@ -897,6 +897,47 @@ def category_kb(kind: str):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def gender_brand_keys(gender: str):
+    keys = []
+    for key in BRAND_KEYS:
+        if any(True for p in BRAND_GROUPS.get(key, []) if gender in ("m", "w") and re.search(rf"\({gender}\)", str(p.get("name", "")), re.I) or gender == "u" and not re.search(r"\((?:m|w)\)", str(p.get("name", "")), re.I)):
+            keys.append(key)
+    return keys
+
+def gender_brands_kb(gender: str, page: int = 0):
+    keys = gender_brand_keys(gender)
+    per_page = 15
+    start = page * per_page
+    rows = []
+    for key in keys[start:start + per_page]:
+        bid = BRAND_KEY_TO_ID[key]
+        count = sum(1 for p in BRAND_GROUPS[key] if gender in ("m", "w") and re.search(rf"\({gender}\)", str(p.get("name", "")), re.I) or gender == "u" and not re.search(r"\((?:m|w)\)", str(p.get("name", "")), re.I))
+        rows.append([InlineKeyboardButton(text=f"{BRAND_DISPLAY[key]} · {count}", callback_data=f"gbrand:{gender}:{bid}:0")])
+    nav=[]
+    if page > 0: nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"gbrands:{gender}:{page-1}"))
+    if (page+1)*per_page < len(keys): nav.append(InlineKeyboardButton(text="Далее →", callback_data=f"gbrands:{gender}:{page+1}"))
+    if nav: rows.append(nav)
+    rows += [[InlineKeyboardButton(text="🔎 Найти аромат", callback_data="search")], [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")], [InlineKeyboardButton(text="← Каталог", callback_data="catalog")]]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+def gender_brand_products_kb(gender: str, brand_id: str, page: int = 0):
+    key = BRAND_ID_TO_KEY[brand_id]
+    groups = [g for g in BRAND_GROUPS[key] if gender in ("m", "w") and re.search(rf"\({gender}\)", str(g[0].get("name", "")), re.I) or gender == "u" and not re.search(r"\((?:m|w)\)", str(g[0].get("name", "")), re.I)]
+    total=len(groups); start=page*PAGE_SIZE; items=groups[start:start+PAGE_SIZE]
+    rows=[]
+    for group in items:
+        p=group[0]; title=fragrance_title(p)
+        if len(title)>44: title=title[:41]+"…"
+        price=lowest_group_price(group)
+        if price: title += f" · от {rub(price)}"
+        rows.append([InlineKeyboardButton(text=title, callback_data=f"product:{p['id']}:{brand_id}:{page}:{gender}")])
+    nav=[]
+    if page>0: nav.append(InlineKeyboardButton(text="← Назад", callback_data=f"gbrand:{gender}:{brand_id}:{page-1}"))
+    if (page+1)*PAGE_SIZE<total: nav.append(InlineKeyboardButton(text="Далее →", callback_data=f"gbrand:{gender}:{brand_id}:{page+1}"))
+    if nav: rows.append(nav)
+    rows += [[InlineKeyboardButton(text="← К брендам", callback_data=f"gbrands:{gender}:0")],[InlineKeyboardButton(text="🛒 Корзина", callback_data="cart")],[InlineKeyboardButton(text="🔎 Новый поиск", callback_data="search")],[InlineKeyboardButton(text="← Главное меню", callback_data="home")]]
+    return InlineKeyboardMarkup(inline_keyboard=rows), total
+
 def brand_products_kb(brand_id: str, page: int = 0):
     key = BRAND_ID_TO_KEY[brand_id]
     groups = BRAND_GROUPS[key]
@@ -996,7 +1037,7 @@ async def show_search_results(target_message, user_id: int, page: int = 0):
     await edit_or_replace(target_message, f'🔎 Найдено: <b>{len(matches)}</b>\nЗапрос: «{query}»\n\nВыберите товар:', results_kb(items, page, len(matches)))
 
 
-async def send_product(message, p, brand_id=None, brand_page=0):
+async def send_product(message, p, brand_id=None, brand_page=0, gender=None):
     text = product_text(p)
     kb = product_kb(p["id"], brand_id, brand_page)
     image = p.get("image_url")
@@ -1071,12 +1112,31 @@ async def catalog_category(callback: CallbackQuery):
         return
     gender = {"w": "w", "m": "m", "u": "u"}.get(kind)
     if gender:
-        matches, _ = gender_results(gender, 0)
-        USER_SEARCH[callback.from_user.id] = f"__gender__:{gender}"
         title = "👩 Для неё" if gender == "w" else "👨 Для него" if gender == "m" else "⚪ Унисекс"
-        await edit_or_replace(callback.message, f"<b>{title}</b>\n\nНайдено ароматов: <b>{len(matches)}</b>", results_kb(matches[:PAGE_SIZE], 0, len(matches)))
+        keys = gender_brand_keys(gender)
+        total = sum(sum(1 for p in BRAND_GROUPS[k] if (gender in ("m", "w") and re.search(rf"\({gender}\)", str(p.get("name", "")), re.I)) or (gender == "u" and not re.search(r"\((?:m|w)\)", str(p.get("name", "")), re.I))) for k in keys)
+        await edit_or_replace(callback.message, f"<b>{title}</b>\n\nБрендов: <b>{len(keys)}</b> · Ароматов: <b>{total}</b>\n\nВыберите бренд:", gender_brands_kb(gender, 0))
         await callback.answer()
 
+
+@dp.callback_query(F.data.startswith("gbrands:"))
+async def gender_brands_page(callback: CallbackQuery):
+    _, gender, page = callback.data.split(":")
+    title = "👩 Для неё" if gender == "w" else "👨 Для него" if gender == "m" else "⚪ Унисекс"
+    keys = gender_brand_keys(gender)
+    await edit_or_replace(callback.message, f"<b>{title}</b>\n\nБрендов: <b>{len(keys)}</b>\n\nВыберите бренд:", gender_brands_kb(gender, int(page)))
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("gbrand:"))
+async def gender_brand_page(callback: CallbackQuery):
+    _, gender, brand_id, page = callback.data.split(":")
+    key = BRAND_ID_TO_KEY.get(brand_id)
+    if not key:
+        await callback.answer("Бренд не найден", show_alert=True); return
+    title = BRAND_DISPLAY[key]
+    kb, total = gender_brand_products_kb(gender, brand_id, int(page))
+    await edit_or_replace(callback.message, f"<b>{title}</b>\n\nАроматов: <b>{total}</b>\nВыберите аромат:", kb)
+    await callback.answer()
 
 @dp.callback_query(F.data.startswith("brands:"))
 async def brands_page(callback: CallbackQuery):
@@ -1187,6 +1247,7 @@ async def product(callback: CallbackQuery):
     pid = parts[1]
     brand_id = parts[2] if len(parts) > 2 else None
     brand_page = int(parts[3]) if len(parts) > 3 else 0
+    gender = parts[4] if len(parts) > 4 else None
     p = BY_ID.get(pid)
     if not p:
         await callback.answer("Товар не найден", show_alert=True)
@@ -1195,7 +1256,7 @@ async def product(callback: CallbackQuery):
         await callback.answer("Эта позиция скрыта из клиентского каталога", show_alert=True)
         return
     await callback.message.delete()
-    await send_product(callback.message, p, brand_id, brand_page)
+    await send_product(callback.message, p, brand_id, brand_page, gender)
     await callback.answer()
 
 
@@ -1272,30 +1333,19 @@ async def noop(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "popular")
 async def popular(callback: CallbackQuery):
-    await edit_or_replace(callback.message, "⭐ <b>Популярные бренды</b>\n\nВыберите бренд:", category_kb("popular"))
+    await edit_or_replace(callback.message, "⭐ <b>Популярное</b>\n\nПодключим после теста каталога.", back_home_kb())
     await callback.answer()
 
 
 @dp.callback_query(F.data == "new")
 async def new(callback: CallbackQuery):
-    # The supplier file has no reliable release-date field, so do not invent
-    # a chronological "new arrivals" list. Show a clear catalogue shortcut.
-    await edit_or_replace(callback.message, "🆕 <b>Новинки</b>\n\nВ актуальном прайсе дата поступления не указана. Откройте каталог, чтобы посмотреть все доступные позиции.", InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛍 Открыть каталог", callback_data="catalog")],
-        [InlineKeyboardButton(text="🔎 Найти аромат", callback_data="search")],
-        [InlineKeyboardButton(text="← Главное меню", callback_data="home")],
-    ]))
+    await edit_or_replace(callback.message, "🆕 <b>Новинки</b>\n\nПодключим после теста каталога.", back_home_kb())
     await callback.answer()
 
 
 @dp.callback_query(F.data == "consultant")
 async def consultant(callback: CallbackQuery):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Написать консультанту", url="https://t.me/Parfera")],
-        [InlineKeyboardButton(text="🔎 Подобрать аромат", callback_data="search")],
-        [InlineKeyboardButton(text="← Главное меню", callback_data="home")],
-    ])
-    await edit_or_replace(callback.message, "👤 <b>Консультант PARFERA</b>\n\nПомогу подобрать аромат, ответить на вопросы и рассказать о новинках.\n\nНажмите кнопку ниже, чтобы написать консультанту PARFERA.", kb)
+    await edit_or_replace(callback.message, "👤 <b>Консультант PARFERA</b>\n\nПомогу подобрать аромат, ответить на вопросы и рассказать о новинках.\n\nНапишите, какой аромат вы ищете.", InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔎 Подобрать аромат", callback_data="search")], [InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
     await callback.answer()
 
 
