@@ -1203,28 +1203,6 @@ async def ai_back(callback: CallbackQuery):
     await callback.answer()
 
 
-@dp.message(F.text)
-async def ai_free_text(message: Message, state: FSMContext):
-    # SearchState has its own handler above; this handler is for ordinary messages from the main screen.
-    current = await state.get_state()
-    if current is not None:
-        return
-    text = (message.text or "").strip()
-    if not text or text.startswith("/"):
-        return
-    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-    try:
-        answer, candidates = await ai_assist(message.from_user.id, text)
-    except Exception as e:
-        print(f"PARFERA AI error: {e}")
-        await message.answer("🤖 Сейчас не получилось выполнить умный поиск. Попробуйте ещё раз или воспользуйтесь каталогом.", reply_markup=home_kb())
-        return
-    rows = []
-    for p in candidates[:8]:
-        rows.append([InlineKeyboardButton(text=f"🧴 {fragrance_title(p)[:42]}", callback_data=f"product:{p['id']}:ai:0")])
-    rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
-    rows.append([InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog")])
-    await message.answer(answer, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @dp.callback_query(F.data.in_({"search", "catalog_search"}))
@@ -1253,6 +1231,30 @@ async def do_search(message: Message, state: FSMContext):
         await message.answer(f'🔎 По запросу «{query}» ничего не найдено.\n\nПопробуйте более короткий запрос.', reply_markup=back_home_kb())
         return
     await message.answer(f'🔎 Найдено: <b>{len(matches)}</b>\nЗапрос: «{query}»\n\nВыберите товар:', reply_markup=results_kb(items, 0, len(matches)))
+
+
+@dp.message(F.text)
+async def ai_free_text(message: Message, state: FSMContext):
+    # SearchState has its own handler above; this handler is for ordinary messages from the main screen.
+    current = await state.get_state()
+    if current is not None:
+        return
+    text = (message.text or "").strip()
+    if not text or text.startswith("/"):
+        return
+    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    try:
+        answer, candidates = await ai_assist(message.from_user.id, text)
+    except Exception as e:
+        print(f"PARFERA AI error: {e}")
+        await message.answer("🤖 Сейчас не получилось выполнить умный поиск. Попробуйте ещё раз или воспользуйтесь каталогом.", reply_markup=home_kb())
+        return
+    rows = []
+    for p in candidates[:8]:
+        rows.append([InlineKeyboardButton(text=f"🧴 {fragrance_title(p)[:42]}", callback_data=f"product:{p['id']}:ai:0")])
+    rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
+    rows.append([InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog")])
+    await message.answer(answer, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @dp.callback_query(F.data.startswith("page:"))
