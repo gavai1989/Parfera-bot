@@ -698,8 +698,6 @@ def home_kb():
         [InlineKeyboardButton(text="💬 PARFERA AI — подобрать аромат", callback_data="ai_start")],
         [InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog"),
          InlineKeyboardButton(text="🔎 Поиск", callback_data="search")],
-        [InlineKeyboardButton(text="⭐ Популярное", callback_data="popular"),
-         InlineKeyboardButton(text="🆕 Новинки", callback_data="new")],
         [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart"),
          InlineKeyboardButton(text="👤 Консультант", callback_data="consultant")]
     ])
