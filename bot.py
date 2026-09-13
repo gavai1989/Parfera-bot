@@ -2,6 +2,8 @@ import os
 import json
 import asyncio
 import re
+import html
+from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from aiohttp import web
 
@@ -24,6 +26,7 @@ if not TOKEN:
 OPENAI_API_KEY = os.environ.get("PARFERA_OPENAI_API_KEY")
 OPENAI_MODEL = os.environ.get("PARFERA_OPENAI_MODEL", "gpt-5.6-luna")
 OPENAI_CLIENT = AsyncOpenAI(api_key=OPENAI_API_KEY) if (OPENAI_API_KEY and AsyncOpenAI) else None
+ADMIN_CHAT_ID = os.environ.get("PARFERA_ADMIN_CHAT_ID")
 
 with open("catalog.json", encoding="utf-8") as f:
     PRODUCTS = json.load(f)["products"]
@@ -1342,8 +1345,74 @@ async def delete_item(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "checkout")
 async def checkout(callback: CallbackQuery):
-    await edit_or_replace(callback.message, "📦 <b>Оформление заказа</b>\n\nНа тестовом этапе заказ пока не оплачивается. Следующим этапом подключим данные покупателя, доставку и отправку заказа менеджеру PARFERA.", InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Корзина", callback_data="cart")], [InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
-    await callback.answer()
+    uid = callback.from_user.id
+    items = CARTS.get(uid, [])
+    if not items:
+        await callback.answer("Корзина пуста", show_alert=True)
+        return
+
+    if not ADMIN_CHAT_ID:
+        await edit_or_replace(
+            callback.message,
+            "📦 <b>Заказ</b>\n\nСейчас приём заказов ещё не настроен. Администратору нужно один раз указать <b>PARFERA_ADMIN_CHAT_ID</b> в Render.",
+            InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="← Корзина", callback_data="cart")],
+                [InlineKeyboardButton(text="← Главное меню", callback_data="home")],
+            ])
+        )
+        await callback.answer()
+        return
+
+    total = sum(x["price"] * x["qty"] for x in items)
+    order_no = datetime.now().strftime("%d%m%H%M%S")
+    user = callback.from_user
+    username = f"@{user.username}" if user.username else "не указан"
+    full_name = html.escape(" ".join(filter(None, [user.first_name, user.last_name]))) or "не указано"
+
+    lines = [
+        f"🛍 <b>НОВЫЙ ЗАКАЗ PARFERA №{order_no}</b>",
+        "",
+        f"👤 Клиент: {full_name}",
+        f"💬 Telegram: {html.escape(username)}",
+        f"🆔 ID: <code>{user.id}</code>",
+        "",
+        "<b>Состав заказа:</b>",
+    ]
+    for i, x in enumerate(items, 1):
+        lines.append(
+            f"{i}. {html.escape(str(x['name']))} — {html.escape(str(x['type']))}, "
+            f"{html.escape(str(x['volume']))} · {x['qty']} × {rub(x['price'])} ₽"
+        )
+    lines += ["", f"💰 <b>Итого: {rub(total)} ₽</b>", "", "📩 Заказ отправлен из Telegram-магазина PARFERA."]
+    order_text = "\n".join(lines)
+
+    try:
+        await callback.bot.send_message(chat_id=int(ADMIN_CHAT_ID), text=order_text)
+    except Exception as e:
+        print(f"Order send failed: {e}")
+        await callback.answer("Не удалось отправить заказ консультанту", show_alert=True)
+        return
+
+    CARTS.pop(uid, None)
+    await edit_or_replace(
+        callback.message,
+        f"✅ <b>Заказ принят!</b>\n\nНомер заказа: <b>№{order_no}</b>\n\nВаш заказ отправлен консультанту PARFERA <b>@Parfera</b>. Он свяжется с вами в Telegram.",
+        InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Консультант @Parfera", url="https://t.me/Parfera")],
+            [InlineKeyboardButton(text="🛍 Продолжить покупки", callback_data="catalog")],
+            [InlineKeyboardButton(text="← Главное меню", callback_data="home")],
+        ])
+    )
+    await callback.answer("Заказ отправлен")
+
+
+@dp.message(F.text == "/myid")
+async def myid(message: Message):
+    await message.answer(
+        f"🆔 Ваш Telegram ID: <code>{message.from_user.id}</code>\n\n"
+        "Этот ID нужен для настройки получения заказов в Render.\n"
+        "Никому не отправляйте токены или пароли."
+    )
 
 
 @dp.callback_query(F.data == "noop")
