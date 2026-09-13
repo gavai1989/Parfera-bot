@@ -1234,6 +1234,15 @@ async def do_search(message: Message, state: FSMContext):
     await message.answer(f'🔎 Найдено: <b>{len(matches)}</b>\nЗапрос: «{query}»\n\nВыберите товар:', reply_markup=results_kb(items, 0, len(matches)))
 
 
+@dp.message(F.text == "/myid")
+async def myid(message: Message):
+    await message.answer(
+        f"🆔 Ваш Telegram ID: <code>{message.from_user.id}</code>\n\n"
+        "Этот ID нужен для настройки получения заказов в Render.\n"
+        "Никому не отправляйте токены или пароли."
+    )
+
+
 @dp.message(F.text)
 async def ai_free_text(message: Message, state: FSMContext):
     # SearchState has its own handler above; this handler is for ordinary messages from the main screen.
@@ -1404,15 +1413,6 @@ async def checkout(callback: CallbackQuery):
         ])
     )
     await callback.answer("Заказ отправлен")
-
-
-@dp.message(F.text == "/myid")
-async def myid(message: Message):
-    await message.answer(
-        f"🆔 Ваш Telegram ID: <code>{message.from_user.id}</code>\n\n"
-        "Этот ID нужен для настройки получения заказов в Render.\n"
-        "Никому не отправляйте токены или пароли."
-    )
 
 
 @dp.callback_query(F.data == "noop")
