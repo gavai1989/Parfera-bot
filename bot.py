@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V19-STABLE"
+PARFERA_AI_VERSION = "V21-TYPING-FIX"
 import asyncio
 import re
 import html
@@ -15,7 +15,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.filters import CommandStart
 from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ChatAction
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
@@ -1581,13 +1581,20 @@ async def ai_free_text(message: Message, state: FSMContext):
     async def keep_typing():
         try:
             while True:
-                await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-                await asyncio.sleep(4)
+                await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+                await asyncio.sleep(3)
         except asyncio.CancelledError:
             return
         except Exception as e:
             print(f"PARFERA typing indicator error: {type(e).__name__}: {e!r}")
 
+    # Send the first typing action immediately, before starting the AI request.
+    # Telegram displays this only temporarily in the chat header, so refresh it
+    # every few seconds until the AI response is ready.
+    try:
+        await message.bot.send_chat_action(chat_id=message.chat.id, action=ChatAction.TYPING)
+    except Exception as e:
+        print(f"PARFERA typing initial error: {type(e).__name__}: {e!r}")
     typing_task = asyncio.create_task(keep_typing())
     try:
         answer, candidates = await ai_assist(message.from_user.id, text)
