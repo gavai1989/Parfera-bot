@@ -807,7 +807,9 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
                 "Выбери 3–5 наиболее подходящих позиций. Если вариантов меньше 3, покажи столько, сколько есть. "
                 "Для каждого кратко объясни соответствие запросу, но не придумывай конкретные ноты или свойства, "
                 "если их нет в данных. Обязательно укажи название, концентрацию, объём и цену из каталога. "
-                "Пиши естественно и премиально. Используй HTML Telegram <b> и <i>, не Markdown. Не рассуждай о процессе поиска и не повторяй запрос клиента."
+                "Пиши естественно и премиально. Используй HTML Telegram <b> и <i>, не Markdown. Не рассуждай о процессе поиска и не повторяй запрос клиента. "
+                "КРИТИЧЕСКИ ВАЖНО: в конце ответа добавь отдельной строкой строго в формате SELECTED_IDS: id1,id2,id3 — "
+                "только ID тех позиций, которые ты реально рекомендовал в тексте, в том же порядке. Не добавляй туда другие ID."
             )
             final_response = await OPENAI_CLIENT.responses.create(
                 model=OPENAI_MODEL,
@@ -817,7 +819,32 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
                 ],
                 tools=[],
             )
-            final_text = (final_response.output_text or "").strip()
+            raw_final = (final_response.output_text or "").strip()
+            # AI must explicitly return the IDs it recommended. We use these IDs
+            # to build buttons, so text and buttons can never point to different products.
+            selected_match = re.search(r"SELECTED_IDS\s*:\s*([^\n]+)", raw_final, flags=re.I)
+            selected_ids = []
+            if selected_match:
+                allowed = {str(p["id"]): p for p in collected[:5]}
+                for token in selected_match.group(1).split(","):
+                    pid = token.strip().strip("` ")
+                    if pid in allowed and pid not in selected_ids:
+                        selected_ids.append(pid)
+                raw_final = raw_final[:selected_match.start()].rstrip()
+            if selected_ids:
+                selected_products = [BY_ID[pid] for pid in selected_ids]
+                # Keep only products actually mentioned by the AI.
+                collected = selected_products
+            if selected_ids:
+                final_text = raw_final
+            else:
+                # If the model failed to return the required IDs, never expose
+                # potentially mismatched AI text. Build a safe catalog-only response.
+                lines = ["💬 <b>PARFERA AI рекомендует:</b>", ""]
+                for i, p in enumerate(collected[:5], 1):
+                    price = rub(p["bottle_price_rub"]) if p.get("bottle_price_rub") else "цена уточняется"
+                    lines.append(f"<b>{i}. {html.escape(fragrance_title(p))}</b> — {p.get('volume','')} мл, {price}")
+                final_text = "\n".join(lines)
         except Exception as e:
             print(f"PARFERA AI finalization error: {type(e).__name__}: {e!r}")
 
