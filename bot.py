@@ -824,22 +824,33 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
             # to build buttons, so text and buttons can never point to different products.
             selected_match = re.search(r"SELECTED_IDS\s*:\s*([^\n]+)", raw_final, flags=re.I)
             selected_ids = []
+            allowed = {str(p["id"]): p for p in collected[:5]}
             if selected_match:
-                allowed = {str(p["id"]): p for p in collected[:5]}
                 for token in selected_match.group(1).split(","):
-                    pid = token.strip().strip("` ")
+                    pid = token.strip().strip("` \t")
                     if pid in allowed and pid not in selected_ids:
                         selected_ids.append(pid)
                 raw_final = raw_final[:selected_match.start()].rstrip()
+
+            # Second safety net: if the model did not return IDs, recover the
+            # products it actually mentioned by matching exact catalog titles
+            # in its final text. This prevents buttons from ever pointing at
+            # products different from the written recommendations.
+            if not selected_ids:
+                lower_final = raw_final.lower()
+                for p in collected[:5]:
+                    title = fragrance_title(p).strip()
+                    if title and title.lower() in lower_final and str(p["id"]) not in selected_ids:
+                        selected_ids.append(str(p["id"]))
+
             if selected_ids:
-                selected_products = [BY_ID[pid] for pid in selected_ids]
-                # Keep only products actually mentioned by the AI.
-                collected = selected_products
-            if selected_ids:
+                selected_products = [BY_ID[pid] for pid in selected_ids if pid in BY_ID]
+                collected = selected_products[:5]
                 final_text = raw_final
             else:
-                # If the model failed to return the required IDs, never expose
-                # potentially mismatched AI text. Build a safe catalog-only response.
+                # Never expose AI text if we cannot prove which catalog products
+                # it refers to. Fall back to verified catalog entries so text and
+                # buttons are guaranteed to correspond.
                 lines = ["💬 <b>PARFERA AI рекомендует:</b>", ""]
                 for i, p in enumerate(collected[:5], 1):
                     price = rub(p["bottle_price_rub"]) if p.get("bottle_price_rub") else "цена уточняется"
