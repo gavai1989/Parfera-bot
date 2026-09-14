@@ -730,14 +730,15 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
         "type": "function",
         "name": "search_catalog",
         "description": "Проверить конкретный бренд, аромат или кандидата по реальному каталогу PARFERA. Для описательного запроса сначала выбери конкретные названия-кандидаты из своих знаний и проверяй их по одному. Можно вызывать инструмент несколько раз.",
+        "strict": True,
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Конкретное название аромата или бренда для проверки. Не передавай сюда весь описательный запрос клиента."},
-                "brand": {"type": "string", "description": "Бренд, если его нужно отдельно ограничить"},
-                "gender": {"type": "string", "enum": ["", "m", "w", "u"], "description": "m мужской, w женский, u унисекс"},
-                "max_price": {"type": ["integer", "null"], "description": "Максимальная цена в рублях, если клиент её указал"},
-                "volume": {"type": ["integer", "null"], "description": "Желаемый объём в мл, если указан"},
+                "brand": {"type": "string", "description": "Бренд, если его нужно отдельно ограничить. Иначе пустая строка."},
+                "gender": {"type": "string", "enum": ["", "m", "w", "u"], "description": "m мужской, w женский, u унисекс. Иначе пустая строка."},
+                "max_price": {"anyOf": [{"type": "integer"}, {"type": "null"}], "description": "Максимальная цена в рублях, если клиент её указал; иначе null."},
+                "volume": {"anyOf": [{"type": "integer"}, {"type": "null"}], "description": "Желаемый объём в мл, если указан; иначе null."},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 12}
             },
             "required": ["query", "brand", "gender", "max_price", "volume", "limit"],
@@ -751,7 +752,7 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
     seen_ids = set()
 
     for _ in range(6):
-        response = await OPENAI_CLIENT.responses.create(model=OPENAI_MODEL, input=input_items, tools=[tool])
+        response = await OPENAI_CLIENT.responses.create(model=OPENAI_MODEL, input=input_items, tools=[tool], parallel_tool_calls=False)
         calls = [x for x in response.output if getattr(x, "type", "") == "function_call"]
         if not calls:
             final_text = response.output_text or "Не удалось сформировать ответ. Попробуйте уточнить запрос."
@@ -1355,7 +1356,7 @@ async def ai_free_text(message: Message, state: FSMContext):
     try:
         answer, candidates = await ai_assist(message.from_user.id, text)
     except Exception as e:
-        print(f"PARFERA AI error: {e}")
+        print(f"PARFERA AI error: {type(e).__name__}: {e!r}")
         await message.answer("🤖 Сейчас не получилось выполнить умный поиск. Попробуйте ещё раз или воспользуйтесь каталогом.", reply_markup=home_kb())
         return
     rows = []
