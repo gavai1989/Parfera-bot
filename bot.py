@@ -792,7 +792,43 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
             input_items.append({"type": "function_call_output", "call_id": call.call_id, "output": payload})
 
     if not final_text:
-        final_text = "Не удалось выполнить поиск. Попробуйте написать бренд или название аромата."
+        # The model may spend all tool turns checking candidates without emitting
+        # a final text response. Force one final text-only pass using the verified
+        # tool results already collected. This keeps descriptive requests useful
+        # instead of falling back to the ordinary catalog-search message.
+        try:
+            if collected:
+                final_input = input_items + [{
+                    "role": "user",
+                    "content": (
+                        "Сформируй итоговый ответ клиенту на русском. "
+                        "Используй только проверенные позиции из результатов search_catalog. "
+                        "Дай 3–5 лучших вариантов, кратко объясни, почему они подходят под запрос, "
+                        "и укажи название, концентрацию, доступный объём и цену только из данных каталога. "
+                        "Не придумывай характеристики товара, которых нет в проверенных результатах."
+                    )
+                }]
+                final_response = await OPENAI_CLIENT.responses.create(
+                    model=OPENAI_MODEL, input=final_input, tools=[]
+                )
+                final_text = final_response.output_text or ""
+        except Exception as e:
+            print(f"PARFERA AI finalization error: {type(e).__name__}: {e!r}")
+
+    if not final_text:
+        if collected:
+            lines = ["💬 <b>Подобрал варианты из каталога PARFERA:</b>", ""]
+            for p in collected[:5]:
+                prices = []
+                if p.get("bottle_price_rub"):
+                    prices.append(f"{p.get('volume','')} — {rub(p['bottle_price_rub'])}")
+                if p.get("tester_price_rub"):
+                    prices.append(f"тестер — {rub(p['tester_price_rub'])}")
+                price_text = ", ".join(prices) if prices else "цена уточняется"
+                lines.append(f"• <b>{html.escape(fragrance_title(p))}</b> — {price_text}")
+            final_text = "\n".join(lines)
+        else:
+            final_text = "Не удалось выполнить поиск. Попробуйте написать бренд или название аромата."
     # Safety net: do not let Markdown bold markers appear literally in Telegram HTML mode.
     final_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", final_text, flags=re.S)
     final_text = re.sub(r"__(.+?)__", r"<b>\1</b>", final_text, flags=re.S)
