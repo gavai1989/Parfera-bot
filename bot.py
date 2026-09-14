@@ -684,7 +684,7 @@ def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_
         # Prefer the cheapest visible bottle/tester only as a deterministic tie-breaker.
         group = unique_variants(visible_group(p))
         rep = next((x for x in group if x.get("bottle_price_rub")), p)
-        price = min([int(x.get("bottle_price_rub") or 10**9), int(x.get("tester_price_rub") or 10**9)])
+        price = min([int(p.get("bottle_price_rub") or 10**9), int(p.get("tester_price_rub") or 10**9)])
         scored.append((score, price, fragrance_title(rep).lower(), gk, rep))
 
     # One card per fragrance/concentration/gender.
