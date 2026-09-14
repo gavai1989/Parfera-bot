@@ -576,6 +576,12 @@ QUERY_ALIASES = {
     "экс нихило": "ex nihilo",
     "крид авентус": "creed aventus",
     "авентус": "aventus",
+    "блу де шанель": "bleu de chanel",
+    "блю де шанель": "bleu de chanel",
+    "блу бе шанель": "bleu de chanel",
+    "блю бе шанель": "bleu de chanel",
+    "блу шанель": "bleu de chanel",
+    "блю шанель": "bleu de chanel",
 }
 
 RU_TO_EN = str.maketrans({
@@ -703,6 +709,84 @@ def ai_tool_result(candidates: List[dict]) -> dict:
     return {"count": len(out), "items": out}
 
 
+
+def _fast_base_name(p: dict) -> str:
+    """Base fragrance name for ultra-fast local typo/transliteration matching."""
+    name = norm(p.get("name", ""))
+    name = re.sub(r"\b(?:edp|edt|parfum|parfume|extrait|eau de parfum|eau de toilette)\b", " ", name, flags=re.I)
+    name = re.sub(r"\b\d+(?:[.,]\d+)?\s*ml\b", " ", name, flags=re.I)
+    name = re.sub(r"\btester\b|\bпробник\b|\b(?:без крышки|с крышкой)\b", " ", name, flags=re.I)
+    name = re.sub(r"\s*\((?:m|w|u)\)\b", " ", name, flags=re.I)
+    return re.sub(r"\s+", " ", name).strip(" -·")
+
+
+def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
+    """Resolve a likely product-name query locally, with typos and Russian transliteration.
+    No OpenAI/network call is made. Returns one representative per concentration/gender group.
+    """
+    q = normalize_ai_query(query)
+    tokens = ai_search_tokens(q)
+    if not tokens:
+        return []
+
+    # Build candidates once from the in-memory catalog.
+    groups = {}
+    for p in PRODUCTS:
+        if not variant_is_client_friendly(p):
+            continue
+        gk = group_key(p)
+        if gk not in groups:
+            groups[gk] = p
+
+    scored = []
+    q_full = q.translate(RU_TO_EN)
+    for p in groups.values():
+        base = _fast_base_name(p)
+        base_latin = base.translate(RU_TO_EN)
+        raw_tokens = re.findall(r"[a-z0-9]+", base_latin)
+        if not raw_tokens:
+            continue
+        sims = [max(token_similarity(t, rt) for rt in raw_tokens) for t in tokens]
+        coverage = sum(1 for v in sims if v >= 0.68) / len(sims)
+        if coverage < 0.75:
+            continue
+        avg = sum(sims) / len(sims)
+        exact_bonus = 1.0 if q_full in base_latin else 0.0
+        # Prefer names where every meaningful query word is represented.
+        score = coverage * 70 + avg * 30 + exact_bonus * 100
+        scored.append((score, p))
+
+    scored.sort(key=lambda x: (-x[0], fragrance_title(x[1]).lower()))
+    if not scored:
+        return []
+
+    # A real name/typo match should be confidently above random fuzzy matches.
+    if scored[0][0] < 75:
+        return []
+
+    # For a resolved fragrance name, show all matching concentrations/genders, not one random item.
+    best = scored[0][0]
+    threshold = max(75, best - 18)
+    return [p for score, p in scored if score >= threshold][:max(3, min(limit, 12))]
+
+
+def fast_ai_response(query: str, candidates: List[dict]) -> str:
+    lines = ["💬 <b>PARFERA AI</b>", "", f"Нашёл варианты по запросу «{html.escape(query)}»:", ""]
+    for i, p in enumerate(candidates, 1):
+        title = html.escape(fragrance_title(p))
+        prices = []
+        if p.get("bottle_price_rub"):
+            prices.append(f"{p.get('volume','')} — {rub(p['bottle_price_rub'])}")
+        if p.get("tester_price_rub"):
+            prices.append(f"тестер — {rub(p['tester_price_rub'])}")
+        lines.append(f"<b>{i}. {title}</b>")
+        if prices:
+            lines.append(" · ".join(prices))
+        lines.append("")
+    lines.append("Выберите нужную концентрацию:")
+    return "\n".join(lines).strip()
+
+
 async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
     """PARFERA AI: search real catalog, then rank verified IDs and build text/buttons from the same IDs."""
     if OPENAI_CLIENT is None:
@@ -742,7 +826,7 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
             model=OPENAI_MODEL,
             input=input_items,
             tools=[tool],
-            parallel_tool_calls=True,
+            parallel_tool_calls=False,
         )
         calls = [x for x in response.output if getattr(x, "type", "") == "function_call"]
         if not calls:
@@ -1442,6 +1526,17 @@ async def ai_free_text(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     if not text or text.startswith("/"):
         return
+    # FAST PATH: product-name queries are resolved entirely locally.
+    # This avoids the 30–45 sec OpenAI round-trip for obvious names/typos.
+    fast_candidates = fast_ai_name_search(text, limit=12)
+    if fast_candidates:
+        AI_LAST_RESULTS[message.from_user.id] = [p["id"] for p in fast_candidates]
+        rows = [[InlineKeyboardButton(text=f"🧴 {fragrance_title(p)[:58]}", callback_data=f"product:{p['id']}:ai:0")] for p in fast_candidates]
+        rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
+        rows.append([InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog")])
+        await message.answer(fast_ai_response(text, fast_candidates), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        return
+
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     try:
         answer, candidates = await ai_assist(message.from_user.id, text)
