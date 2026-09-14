@@ -791,27 +791,33 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
             payload = json.dumps(ai_tool_result(candidates), ensure_ascii=False)
             input_items.append({"type": "function_call_output", "call_id": call.call_id, "output": payload})
 
-    if not final_text:
-        # The model may spend all tool turns checking candidates without emitting
-        # a final text response. Force one final text-only pass using the verified
-        # tool results already collected. This keeps descriptive requests useful
-        # instead of falling back to the ordinary catalog-search message.
+    if not final_text and collected:
+        # Do the final answer in a clean, separate text-only request.
+        # Do NOT reuse the previous tool-call objects here: some Responses API
+        # models can keep requesting tools instead of emitting final text when
+        # the full tool-call history is passed back in.
         try:
-            if collected:
-                final_input = input_items + [{
-                    "role": "user",
-                    "content": (
-                        "Сформируй итоговый ответ клиенту на русском. "
-                        "Используй только проверенные позиции из результатов search_catalog. "
-                        "Дай 3–5 лучших вариантов, кратко объясни, почему они подходят под запрос, "
-                        "и укажи название, концентрацию, доступный объём и цену только из данных каталога. "
-                        "Не придумывай характеристики товара, которых нет в проверенных результатах."
-                    )
-                }]
-                final_response = await OPENAI_CLIENT.responses.create(
-                    model=OPENAI_MODEL, input=final_input, tools=[]
-                )
-                final_text = final_response.output_text or ""
+            verified = ai_tool_result(collected[:5])
+            final_prompt = (
+                "Ты — PARFERA AI. Сформируй окончательный ответ клиенту на русском.\n"
+                f"Запрос клиента: {user_text}\n\n"
+                "Ниже только проверенные позиции из реального каталога PARFERA. "
+                "Используй ТОЛЬКО их и не придумывай товары, цены, объёмы или наличие.\n"
+                + json.dumps(verified, ensure_ascii=False) + "\n\n"
+                "Выбери 3–5 наиболее подходящих позиций. Если вариантов меньше 3, покажи столько, сколько есть. "
+                "Для каждого кратко объясни соответствие запросу, но не придумывай конкретные ноты или свойства, "
+                "если их нет в данных. Обязательно укажи название, концентрацию, объём и цену из каталога. "
+                "Пиши естественно и премиально. Используй HTML Telegram <b> и <i>, не Markdown."
+            )
+            final_response = await OPENAI_CLIENT.responses.create(
+                model=OPENAI_MODEL,
+                input=[
+                    {"role": "system", "content": AI_SYSTEM_PROMPT},
+                    {"role": "user", "content": final_prompt},
+                ],
+                tools=[],
+            )
+            final_text = (final_response.output_text or "").strip()
         except Exception as e:
             print(f"PARFERA AI finalization error: {type(e).__name__}: {e!r}")
 
