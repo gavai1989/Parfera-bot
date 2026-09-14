@@ -96,11 +96,8 @@ def group_key(p):
 # catalog but are hidden from search, brand lists and product option buttons.
 HIDDEN_VARIANT_MARKERS = (
     "body lotion", "shower gel", "after shave", "af/sh", "shampoo",
-    "deo", "deodorant", "body spray", "body wash", "body lotion", "body cream",
-    "cosm", "cosmetic", "shampoo", "conditioner", "hand wash", "hand cream",
-    "soap", "hair", "bath", "shower", "lotion", "cream", "balm", "gel",
-    "candle", "diffuser", "home fragrance", "mini", "male minis", "female minis",
-    "set ", "gift set", "набор",
+    "deo", "deodorant", "body spray", "cosm", "cosmetic",
+    "mini", "male minis", "female minis", "set ", "gift set", "набор",
 )
 
 def variant_is_client_friendly(p):
@@ -109,9 +106,6 @@ def variant_is_client_friendly(p):
         return False
     # Bundles such as "+ shower gel" are not individual perfume options.
     if " + " in name or name.startswith("+"):
-        return False
-    # Exclude personal-care and home-fragrance products even when they have a normal volume.
-    if re.search(r"\b(?:body|shower|bath|hair|hand|face|soap|wash|lotion|cream|balm|gel|shampoo|conditioner|deodorant|candle|diffuser)\b", name, re.I):
         return False
     m = re.search(r"(\d+(?:[.,]\d+)?)\s*ml\b", name, re.I)
     if not m:
@@ -518,7 +512,29 @@ for bkey, products in BRANDS.items():
 
 # Product images: one image per fragrance + concentration + gender.
 # Volume and tester variants reuse the same image.
-IMAGE_MAP = {}
+IMAGE_MAP = {
+    "versace eros edt (m)": "versace_eros_edt.jpg",
+    "versace eros edp (m)": "versace_eros_edp.jpg",
+    "versace eros parfume (m)": "versace_eros_parfum.jpg",
+    "versace eros flame edp (m)": "versace_eros_flame.jpg",
+    "versace eros energy edp (m)": "versace_eros_energy.jpg",
+    "versace eros najim parfume (m)": "versace_eros_najim.jpg",
+    "versace eau fraiche edt (m)": "versace_eau_fraiche.jpg",
+    "versace eau fraiche extreme edp (m)": "versace_eau_fraiche_extreme.jpg",
+    "versace pour homme dylan blue pour homme edt (m)": "versace_dylan_blue.jpg",
+    "versace pour homme edt (m)": "versace_pour_homme.jpg",
+    "versace pour homme oud noir edp (m)": "versace_oud_noir.jpg",
+    "versace pour femme dylan turquoise edt (w)": "versace_dylan_turquoise.jpg",
+    "versace pour femme dylan purple edp (w)": "versace_dylan_purple.jpg",
+    "versace bright crystal edt (w)": "versace_bright_crystal.jpg",
+    "versace bright crystal parfum (w)": "versace_bright_crystal_parfum.jpg",
+    "versace bright crystal absolu edp (w)": "versace_bright_crystal_absolu.jpg",
+    "versace crystal noir edt (w)": "versace_crystal_noir.jpg",
+    "versace crystal noir parfum (w)": "versace_crystal_noir_parfum.jpg",
+    "versace yellow diamond edt (w)": "versace_yellow_diamond.jpg",
+    "versace crystal emerald edp (w)": "versace_crystal_emerald.jpg",
+    "versace woman edp (w)": "versace_woman.jpg",
+}
 for group_name, filename in IMAGE_MAP.items():
     for p in GROUPS.get(norm(group_name), []):
         p["image_url"] = os.path.join("images", filename)
@@ -538,6 +554,8 @@ AI_SYSTEM_PROMPT = """
 - Если хочешь предложить известный тебе аромат как кандидата, сначала проверь его через search_catalog.
 - Для описательного запроса («свежий женский на осень», «сладкий подарок», «похожее на Erba Pura») используй свои знания о парфюмерии, чтобы выбрать несколько КОНКРЕТНЫХ названий-кандидатов, затем проверь каждый кандидат через search_catalog.
 - Для запроса с названием аромата сначала ищи именно название, а не весь текст запроса.
+- Если клиент написал искажённое русское/фонетическое название, воспринимай его как возможную запись оригинального английского названия.
+- Если распознано конкретное название, покажи все найденные основные концентрации/версии этого аромата, а не одну случайную позицию.
 - Можно сделать несколько вызовов search_catalog за один запрос клиента, чтобы проверить 3–6 кандидатов.
 - Если кандидат не найден, не показывай его и попробуй следующий.
 - Если после проверки подходящих товаров нет, честно скажи, что в текущем каталоге подходящего варианта не найдено.
@@ -547,8 +565,6 @@ AI_SYSTEM_PROMPT = """
 - Отвечай на русском, дружелюбно и премиально, как живой консультант бутика.
 - Не начинай каждый ответ с «В каталоге есть». Говори естественно: «Я бы посмотрел…», «Для вашего запроса хорошо подходят…».
 - Не перегружай ответ. Обычно достаточно 3–5 рекомендаций.
-- В результатах показывай только парфюмерию: eau de parfum, eau de toilette, parfum, extrait и другие полноценные ароматы. Не показывай body wash, lotion, cream, gel, shampoo, deodorant, свечи, диффузоры, наборы и другую косметику.
-- Если найдено несколько вариантов одного аромата, выбирай наиболее релевантные парфюмерные версии и не засоряй выдачу дублями.
 - Используй HTML-разметку Telegram: <b>жирный</b>, <i>курсив</i>. Не используй Markdown ** или __.
 - Название, концентрацию, объём и цену бери только из результатов search_catalog.
 """
@@ -564,24 +580,36 @@ AI_STOPWORDS = {
     "бергамотом", "бергамот", "ванилью", "ваниль", "розой", "роза", "мускусом", "мускус", "уда", "удом"
 }
 
+# Common Russian phonetic / translation variants used by customers when typing perfume names.
+# Applied token-by-token so phrases such as «Блу де Шанель» become «bleu de chanel»
+# before the deterministic catalog search runs.
 QUERY_ALIASES = {
     "флер наркотик": "fleur narcotique",
     "флер наркотик ex nihilo": "ex nihilo fleur narcotique",
     "флер наркoтик": "fleur narcotique",
+    "теренци кирке": "tiziana terenzi kirke",
     "кирке": "kirke",
     "кирка": "kirke",
-    "теренци кирке": "tiziana terenzi kirke",
-    "эрба пура": "erba pura",
     "эрба пура": "erba pura",
     "экс нихило": "ex nihilo",
     "крид авентус": "creed aventus",
     "авентус": "aventus",
-    "блу де шанель": "bleu de chanel",
-    "блю де шанель": "bleu de chanel",
-    "блу бе шанель": "bleu de chanel",
-    "блю бе шанель": "bleu de chanel",
-    "блу шанель": "bleu de chanel",
-    "блю шанель": "bleu de chanel",
+}
+
+# Short phonetic pieces are intentionally exact-token replacements, not substring replacements.
+# This makes «Блу бе Шанель», «Блю де Шанель», «Шанель Шанс», «Крид Авентус» etc.
+# resolve to the English catalog spelling without an extra AI round-trip.
+QUERY_TOKEN_ALIASES = {
+    "блу": "bleu", "блю": "bleu", "бе": "de",
+    "шанель": "chanel", "шанс": "chance",
+    "крид": "creed",
+    "флер": "fleur", "наркотик": "narcotique",
+    "кирке": "kirke", "кирка": "kirke",
+    "авентус": "aventus", "эрба": "erba",
+    "пура": "pura",
+    "версаче": "versace", "версаче": "versace",
+    "дживанши": "givenchy", "гивенши": "givenchy",
+    "диор": "dior", "шанел": "chanel",
 }
 
 RU_TO_EN = str.maketrans({
@@ -594,8 +622,10 @@ def normalize_ai_query(text: str) -> str:
     q = norm(text).replace("’", "'")
     for src, dst in sorted(QUERY_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
         if src in q:
-            return q.replace(src, dst)
-    return q
+            q = q.replace(src, dst)
+    # Normalize remaining short phonetic / translated tokens.
+    parts = re.findall(r"[a-zа-яё0-9']+", q, re.I)
+    return " ".join(QUERY_TOKEN_ALIASES.get(part.lower(), part.lower()) for part in parts)
 
 
 def ai_search_tokens(text: str) -> List[str]:
@@ -676,7 +706,7 @@ def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_
         # Prefer the cheapest visible bottle/tester only as a deterministic tie-breaker.
         group = unique_variants(visible_group(p))
         rep = next((x for x in group if x.get("bottle_price_rub")), p)
-        price = min([int(p.get("bottle_price_rub") or 10**9), int(p.get("tester_price_rub") or 10**9)])
+        price = min([int(x.get("bottle_price_rub") or 10**9), int(x.get("tester_price_rub") or 10**9)])
         scored.append((score, price, fragrance_title(rep).lower(), gk, rep))
 
     # One card per fragrance/concentration/gender.
@@ -709,86 +739,8 @@ def ai_tool_result(candidates: List[dict]) -> dict:
     return {"count": len(out), "items": out}
 
 
-
-def _fast_base_name(p: dict) -> str:
-    """Base fragrance name for ultra-fast local typo/transliteration matching."""
-    name = norm(p.get("name", ""))
-    name = re.sub(r"\b(?:edp|edt|parfum|parfume|extrait|eau de parfum|eau de toilette)\b", " ", name, flags=re.I)
-    name = re.sub(r"\b\d+(?:[.,]\d+)?\s*ml\b", " ", name, flags=re.I)
-    name = re.sub(r"\btester\b|\bпробник\b|\b(?:без крышки|с крышкой)\b", " ", name, flags=re.I)
-    name = re.sub(r"\s*\((?:m|w|u)\)\b", " ", name, flags=re.I)
-    return re.sub(r"\s+", " ", name).strip(" -·")
-
-
-def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
-    """Resolve a likely product-name query locally, with typos and Russian transliteration.
-    No OpenAI/network call is made. Returns one representative per concentration/gender group.
-    """
-    q = normalize_ai_query(query)
-    tokens = ai_search_tokens(q)
-    if not tokens:
-        return []
-
-    # Build candidates once from the in-memory catalog.
-    groups = {}
-    for p in PRODUCTS:
-        if not variant_is_client_friendly(p):
-            continue
-        gk = group_key(p)
-        if gk not in groups:
-            groups[gk] = p
-
-    scored = []
-    q_full = q.translate(RU_TO_EN)
-    for p in groups.values():
-        base = _fast_base_name(p)
-        base_latin = base.translate(RU_TO_EN)
-        raw_tokens = re.findall(r"[a-z0-9]+", base_latin)
-        if not raw_tokens:
-            continue
-        sims = [max(token_similarity(t, rt) for rt in raw_tokens) for t in tokens]
-        coverage = sum(1 for v in sims if v >= 0.68) / len(sims)
-        if coverage < 0.75:
-            continue
-        avg = sum(sims) / len(sims)
-        exact_bonus = 1.0 if q_full in base_latin else 0.0
-        # Prefer names where every meaningful query word is represented.
-        score = coverage * 70 + avg * 30 + exact_bonus * 100
-        scored.append((score, p))
-
-    scored.sort(key=lambda x: (-x[0], fragrance_title(x[1]).lower()))
-    if not scored:
-        return []
-
-    # A real name/typo match should be confidently above random fuzzy matches.
-    if scored[0][0] < 75:
-        return []
-
-    # For a resolved fragrance name, show all matching concentrations/genders, not one random item.
-    best = scored[0][0]
-    threshold = max(75, best - 18)
-    return [p for score, p in scored if score >= threshold][:max(3, min(limit, 12))]
-
-
-def fast_ai_response(query: str, candidates: List[dict]) -> str:
-    lines = ["💬 <b>PARFERA AI</b>", "", f"Нашёл варианты по запросу «{html.escape(query)}»:", ""]
-    for i, p in enumerate(candidates, 1):
-        title = html.escape(fragrance_title(p))
-        prices = []
-        if p.get("bottle_price_rub"):
-            prices.append(f"{p.get('volume','')} — {rub(p['bottle_price_rub'])}")
-        if p.get("tester_price_rub"):
-            prices.append(f"тестер — {rub(p['tester_price_rub'])}")
-        lines.append(f"<b>{i}. {title}</b>")
-        if prices:
-            lines.append(" · ".join(prices))
-        lines.append("")
-    lines.append("Выберите нужную концентрацию:")
-    return "\n".join(lines).strip()
-
-
 async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
-    """PARFERA AI: search real catalog, then rank verified IDs and build text/buttons from the same IDs."""
+    """Run PARFERA AI with verified catalog search results only."""
     if OPENAI_CLIENT is None:
         return ("🤖 <b>Умный помощник пока не подключён.</b>\n\nНо поиск по каталогу уже работает. Нажмите «🔎 Поиск» или напишите название бренда/аромата.", [])
 
@@ -799,16 +751,16 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
     tool = {
         "type": "function",
         "name": "search_catalog",
-        "description": "Проверить конкретный бренд, аромат или кандидата по реальному каталогу PARFERA.",
+        "description": "Проверить конкретный бренд, аромат или кандидата по реальному каталогу PARFERA. Поиск понимает русскую фонетическую запись и распространённые искажения названий. Для описательного запроса сначала выбери конкретные названия-кандидаты из своих знаний и проверяй их по одному. Можно вызывать инструмент несколько раз.",
         "strict": True,
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Конкретное название аромата или бренда."},
-                "brand": {"type": "string", "description": "Бренд, если нужен отдельный фильтр. Иначе пустая строка."},
-                "gender": {"type": "string", "enum": ["", "m", "w", "u"]},
-                "max_price": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
-                "volume": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+                "query": {"type": "string", "description": "Конкретное название аромата или бренда для проверки. Не передавай сюда весь описательный запрос клиента."},
+                "brand": {"type": "string", "description": "Бренд, если его нужно отдельно ограничить. Иначе пустая строка."},
+                "gender": {"type": "string", "enum": ["", "m", "w", "u"], "description": "m мужской, w женский, u унисекс. Иначе пустая строка."},
+                "max_price": {"anyOf": [{"type": "integer"}, {"type": "null"}], "description": "Максимальная цена в рублях, если клиент её указал; иначе null."},
+                "volume": {"anyOf": [{"type": "integer"}, {"type": "null"}], "description": "Желаемый объём в мл, если указан; иначе null."},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 12}
             },
             "required": ["query", "brand", "gender", "max_price", "volume", "limit"],
@@ -817,150 +769,46 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
     }
 
     input_items = [{"role": "system", "content": AI_SYSTEM_PROMPT}] + history
+    final_text = ""
     collected: List[dict] = []
-    seen_groups = set()
+    seen_ids = set()
 
-    # Search phase: at most 3 tool rounds. All returned products are real catalog items.
-    for _ in range(3):
-        response = await OPENAI_CLIENT.responses.create(
-            model=OPENAI_MODEL,
-            input=input_items,
-            tools=[tool],
-            parallel_tool_calls=False,
-        )
+    for _ in range(6):
+        response = await OPENAI_CLIENT.responses.create(model=OPENAI_MODEL, input=input_items, tools=[tool], parallel_tool_calls=False)
         calls = [x for x in response.output if getattr(x, "type", "") == "function_call"]
         if not calls:
+            final_text = response.output_text or "Не удалось сформировать ответ. Попробуйте уточнить запрос."
             break
-
         input_items += response.output
         for call in calls:
             try:
                 args = json.loads(call.arguments or "{}")
-            except Exception:
+            except json.JSONDecodeError:
                 args = {}
-
             candidates = ai_candidate_search(
                 query=str(args.get("query") or ""),
                 brand=str(args.get("brand") or ""),
                 gender=str(args.get("gender") or ""),
                 max_price=args.get("max_price"),
                 volume=args.get("volume"),
-                limit=min(int(args.get("limit") or 5), 5),
+                limit=int(args.get("limit") or 8),
             )
-
             for p in candidates:
-                gk = group_key(p)
-                if gk not in seen_groups:
-                    seen_groups.add(gk)
+                if p["id"] not in seen_ids:
+                    seen_ids.add(p["id"])
                     collected.append(p)
-
             payload = json.dumps(ai_tool_result(candidates), ensure_ascii=False)
-            input_items.append({
-                "type": "function_call_output",
-                "call_id": call.call_id,
-                "output": payload
-            })
+            input_items.append({"type": "function_call_output", "call_id": call.call_id, "output": payload})
 
-            if len(collected) >= 12:
-                break
-
-        if len(collected) >= 12:
-            break
-
-    if not collected:
-        history.append({"role": "assistant", "content": "Не удалось найти подходящие позиции в текущем каталоге."})
-        history[:] = history[-AI_MAX_HISTORY:]
-        AI_LAST_RESULTS[uid] = []
-        return "Не удалось найти подходящие позиции в текущем каталоге. Попробуйте указать бренд, название или бюджет.", []
-
-    # Rank phase: AI returns ONLY catalog IDs + short reasons.
-    verified = ai_tool_result(collected[:12])
-    rank_prompt = (
-        "Ты — PARFERA AI, премиальный консультант по парфюмерии.\n"
-        f"Запрос клиента: {user_text}\n\n"
-        "Ниже список ТОЛЬКО реально найденных позиций из каталога. "
-        "Выбери 3–5 лучших совпадений. Не придумывай новые товары.\n"
-        + json.dumps(verified, ensure_ascii=False)
-        + "\n\n"
-        "Верни ТОЛЬКО валидный JSON-массив объектов без Markdown и без пояснений.\n"
-        'Формат: [{"id":"ТОЧНЫЙ_ID_ИЗ_СПИСКА","reason":"короткая причина на русском"}, ...]\n'
-        "ID должны быть только из переданного списка. reason — максимум 1 короткое предложение, "
-        "без выдумывания конкретных нот, если их нет в данных."
-    )
-
-    selected = []
-    try:
-        rank_response = await OPENAI_CLIENT.responses.create(
-            model=OPENAI_MODEL,
-            input=[
-                {"role": "system", "content": AI_SYSTEM_PROMPT},
-                {"role": "user", "content": rank_prompt},
-            ],
-            tools=[],
-        )
-        raw = (rank_response.output_text or "").strip()
-        # Extract JSON array even if the model accidentally wrapped it in whitespace/code fences.
-        m = re.search(r"\[\s*\{.*\}\s*\]", raw, flags=re.S)
-        if m:
-            data = json.loads(m.group(0))
-            allowed = {str(p["id"]): p for p in collected[:12]}
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                pid = str(item.get("id") or "").strip()
-                if pid in allowed and pid not in {x["id"] for x in selected}:
-                    reason = str(item.get("reason") or "").strip()
-                    selected.append({"product": allowed[pid], "reason": reason[:240]})
-                if len(selected) >= 5:
-                    break
-    except Exception as e:
-        print(f"PARFERA AI ranking error: {type(e).__name__}: {e!r}")
-
-    # Guaranteed fallback: if ranking failed, use the first verified candidates.
-    if not selected:
-        for p in collected[:5]:
-            selected.append({"product": p, "reason": ""})
-
-    products = [x["product"] for x in selected[:5]]
-    AI_LAST_RESULTS[uid] = [p["id"] for p in products]
-
-    # Build the visible answer from the EXACT same product objects used for buttons.
-    # This makes text/button mismatch impossible.
-    lines = ["💬 <b>PARFERA AI рекомендует</b>", ""]
-    for i, item in enumerate(selected[:5], 1):
-        p = item["product"]
-        title = html.escape(fragrance_title(p))
-        raw_name = str(p.get("name", ""))
-        concentration = ""
-        cm = re.search(r"\b(EDP|EDT|PARFUM|EXTRAIT)\b", raw_name, re.I)
-        if cm:
-            concentration = cm.group(1).upper()
-
-        volume_text = str(p.get("volume") or "").strip()
-        price_text = rub(p["bottle_price_rub"]) if p.get("bottle_price_rub") else (
-            rub(p["tester_price_rub"]) if p.get("tester_price_rub") else "уточняется"
-        )
-
-        lines.append(f"<b>{i}. {title}</b>")
-        meta = []
-        if concentration:
-            meta.append(concentration)
-        if volume_text:
-            meta.append(f"{volume_text} мл")
-        meta.append(price_text)
-        lines.append(" · ".join(meta))
-
-        reason = item["reason"].strip()
-        if reason:
-            lines.append(f"<i>{html.escape(reason)}</i>")
-        lines.append("")
-
-    lines.append("⭐ <b>Хотите посмотреть варианты подробнее?</b>")
-    final_text = "\n".join(lines).strip()
-
+    if not final_text:
+        final_text = "Не удалось выполнить поиск. Попробуйте написать бренд или название аромата."
+    # Safety net: do not let Markdown bold markers appear literally in Telegram HTML mode.
+    final_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", final_text, flags=re.S)
+    final_text = re.sub(r"__(.+?)__", r"<b>\1</b>", final_text, flags=re.S)
     history.append({"role": "assistant", "content": final_text})
     history[:] = history[-AI_MAX_HISTORY:]
-    return final_text, products
+    AI_LAST_RESULTS[uid] = [p["id"] for p in collected]
+    return final_text, collected
 
 
 class SearchState(StatesGroup):
@@ -1526,17 +1374,6 @@ async def ai_free_text(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     if not text or text.startswith("/"):
         return
-    # FAST PATH: product-name queries are resolved entirely locally.
-    # This avoids the 30–45 sec OpenAI round-trip for obvious names/typos.
-    fast_candidates = fast_ai_name_search(text, limit=12)
-    if fast_candidates:
-        AI_LAST_RESULTS[message.from_user.id] = [p["id"] for p in fast_candidates]
-        rows = [[InlineKeyboardButton(text=f"🧴 {fragrance_title(p)[:58]}", callback_data=f"product:{p['id']}:ai:0")] for p in fast_candidates]
-        rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
-        rows.append([InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog")])
-        await message.answer(fast_ai_response(text, fast_candidates), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
-        return
-
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     try:
         answer, candidates = await ai_assist(message.from_user.id, text)
@@ -1545,9 +1382,8 @@ async def ai_free_text(message: Message, state: FSMContext):
         await message.answer("🤖 Сейчас не получилось выполнить умный поиск. Попробуйте ещё раз или воспользуйтесь каталогом.", reply_markup=home_kb())
         return
     rows = []
-    for p in candidates[:5]:
-        title = fragrance_title(p)
-        rows.append([InlineKeyboardButton(text=f"🧴 {title[:58]}", callback_data=f"product:{p['id']}:ai:0")])
+    for p in candidates[:8]:
+        rows.append([InlineKeyboardButton(text=f"🧴 {fragrance_title(p)[:42]}", callback_data=f"product:{p['id']}:ai:0")])
     rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
     rows.append([InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog")])
     await message.answer(answer, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
