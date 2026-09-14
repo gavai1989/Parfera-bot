@@ -1574,7 +1574,21 @@ async def ai_free_text(message: Message, state: FSMContext):
         await message.answer(fast_ai_response(text, fast_candidates), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
         return
 
-    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    # Telegram's "typing…" indicator expires after a few seconds, so keep
+    # refreshing it while the AI is thinking/searching. This runs only for
+    # the slower natural-language consultant flow; the local fast name search
+    # above returns immediately and does not need the indicator.
+    async def keep_typing():
+        try:
+            while True:
+                await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            print(f"PARFERA typing indicator error: {type(e).__name__}: {e!r}")
+
+    typing_task = asyncio.create_task(keep_typing())
     try:
         answer, candidates = await ai_assist(message.from_user.id, text)
     except Exception as e:
@@ -1582,6 +1596,12 @@ async def ai_free_text(message: Message, state: FSMContext):
         traceback.print_exc()
         await message.answer("🤖 Сейчас не получилось выполнить умный поиск. Попробуйте ещё раз или воспользуйтесь каталогом.", reply_markup=home_kb())
         return
+    finally:
+        typing_task.cancel()
+        try:
+            await typing_task
+        except asyncio.CancelledError:
+            pass
     rows = []
     for p in candidates[:5]:
         title = fragrance_title(p)
