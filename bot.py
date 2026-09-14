@@ -96,8 +96,11 @@ def group_key(p):
 # catalog but are hidden from search, brand lists and product option buttons.
 HIDDEN_VARIANT_MARKERS = (
     "body lotion", "shower gel", "after shave", "af/sh", "shampoo",
-    "deo", "deodorant", "body spray", "cosm", "cosmetic",
-    "mini", "male minis", "female minis", "set ", "gift set", "набор",
+    "deo", "deodorant", "body spray", "body wash", "body lotion", "body cream",
+    "cosm", "cosmetic", "shampoo", "conditioner", "hand wash", "hand cream",
+    "soap", "hair", "bath", "shower", "lotion", "cream", "balm", "gel",
+    "candle", "diffuser", "home fragrance", "mini", "male minis", "female minis",
+    "set ", "gift set", "набор",
 )
 
 def variant_is_client_friendly(p):
@@ -106,6 +109,9 @@ def variant_is_client_friendly(p):
         return False
     # Bundles such as "+ shower gel" are not individual perfume options.
     if " + " in name or name.startswith("+"):
+        return False
+    # Exclude personal-care and home-fragrance products even when they have a normal volume.
+    if re.search(r"\b(?:body|shower|bath|hair|hand|face|soap|wash|lotion|cream|balm|gel|shampoo|conditioner|deodorant|candle|diffuser)\b", name, re.I):
         return False
     m = re.search(r"(\d+(?:[.,]\d+)?)\s*ml\b", name, re.I)
     if not m:
@@ -563,6 +569,8 @@ AI_SYSTEM_PROMPT = """
 - Отвечай на русском, дружелюбно и премиально, как живой консультант бутика.
 - Не начинай каждый ответ с «В каталоге есть». Говори естественно: «Я бы посмотрел…», «Для вашего запроса хорошо подходят…».
 - Не перегружай ответ. Обычно достаточно 3–5 рекомендаций.
+- В результатах показывай только парфюмерию: eau de parfum, eau de toilette, parfum, extrait и другие полноценные ароматы. Не показывай body wash, lotion, cream, gel, shampoo, deodorant, свечи, диффузоры, наборы и другую косметику.
+- Если найдено несколько вариантов одного аромата, выбирай наиболее релевантные парфюмерные версии и не засоряй выдачу дублями.
 - Используй HTML-разметку Telegram: <b>жирный</b>, <i>курсив</i>. Не используй Markdown ** или __.
 - Название, концентрацию, объём и цену бери только из результатов search_catalog.
 """
@@ -769,12 +777,17 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
                 gender=str(args.get("gender") or ""),
                 max_price=args.get("max_price"),
                 volume=args.get("volume"),
-                limit=int(args.get("limit") or 8),
+                limit=min(int(args.get("limit") or 5), 5),
             )
             for p in candidates:
-                if p["id"] not in seen_ids:
-                    seen_ids.add(p["id"])
+                # Deduplicate by fragrance/concentration/gender, not by volume/tester row.
+                group_id = group_key(p)
+                if group_id not in seen_ids:
+                    seen_ids.add(group_id)
                     collected.append(p)
+            # Keep the consultant result compact and useful.
+            if len(collected) > 5:
+                collected = collected[:5]
             payload = json.dumps(ai_tool_result(candidates), ensure_ascii=False)
             input_items.append({"type": "function_call_output", "call_id": call.call_id, "output": payload})
 
@@ -1360,8 +1373,9 @@ async def ai_free_text(message: Message, state: FSMContext):
         await message.answer("🤖 Сейчас не получилось выполнить умный поиск. Попробуйте ещё раз или воспользуйтесь каталогом.", reply_markup=home_kb())
         return
     rows = []
-    for p in candidates[:8]:
-        rows.append([InlineKeyboardButton(text=f"🧴 {fragrance_title(p)[:42]}", callback_data=f"product:{p['id']}:ai:0")])
+    for p in candidates[:5]:
+        title = fragrance_title(p)
+        rows.append([InlineKeyboardButton(text=f"🧴 {title[:58]}", callback_data=f"product:{p['id']}:ai:0")])
     rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
     rows.append([InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog")])
     await message.answer(answer, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
