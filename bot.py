@@ -1,5 +1,8 @@
 import os
 import json
+import traceback
+
+PARFERA_AI_VERSION = "V19-STABLE"
 import asyncio
 import re
 import html
@@ -601,9 +604,9 @@ RU_TO_EN = str.maketrans({
 
 def normalize_ai_query(text: str) -> str:
     q = norm(text).replace("’", "'")
-    for src, dst in sorted(QUERY_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
-        if src in q:
-            return q.replace(src, dst)
+    for alias_src, alias_dst in sorted(QUERY_ALIASES.items(), key=lambda pair: len(pair[0]), reverse=True):
+        if alias_src in q:
+            return q.replace(alias_src, alias_dst)
     return q
 
 
@@ -684,7 +687,7 @@ def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_
         gk = group_key(p)
         # Prefer the cheapest visible bottle/tester only as a deterministic tie-breaker.
         group = unique_variants(visible_group(p))
-        rep = next((x for x in group if x.get("bottle_price_rub")), p)
+        rep = next((variant for variant in group if variant.get("bottle_price_rub")), p)
         price = min([int(p.get("bottle_price_rub") or 10**9), int(p.get("tester_price_rub") or 10**9)])
         scored.append((score, price, fragrance_title(rep).lower(), gk, rep))
 
@@ -695,8 +698,8 @@ def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_
         if gk not in best_by_group or row[:3] > best_by_group[gk][:3]:
             best_by_group[gk] = row
     rows = list(best_by_group.values())
-    rows.sort(key=lambda x: (-x[0], x[1], x[2]))
-    return [x[4] for x in rows[:max(1, min(int(limit or 8), 12))]]
+    rows.sort(key=lambda row: (-row[0], row[1], row[2]))
+    return [row[4] for row in rows[:max(1, min(int(limit or 8), 12))]]
 
 
 def ai_tool_result(candidates: List[dict]) -> dict:
@@ -765,7 +768,7 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
         score = coverage * 70 + avg * 30 + exact_bonus * 100
         scored.append((score, p))
 
-    scored.sort(key=lambda x: (-x[0], fragrance_title(x[1]).lower()))
+    scored.sort(key=lambda row: (-row[0], fragrance_title(row[1]).lower()))
     if not scored:
         return []
 
@@ -837,7 +840,7 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
             tools=[tool],
             parallel_tool_calls=False,
         )
-        calls = [x for x in response.output if getattr(x, "type", "") == "function_call"]
+        calls = [output_item for output_item in response.output if getattr(output_item, "type", "") == "function_call"]
         if not calls:
             break
 
@@ -939,6 +942,7 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
                     break
     except Exception as e:
         print(f"PARFERA AI ranking error: {type(e).__name__}: {e!r}")
+        traceback.print_exc()
 
     # Guaranteed fallback: ranking is optional; verified catalog candidates are not.
     if not selected:
@@ -1575,6 +1579,7 @@ async def ai_free_text(message: Message, state: FSMContext):
         answer, candidates = await ai_assist(message.from_user.id, text)
     except Exception as e:
         print(f"PARFERA AI error: {type(e).__name__}: {e!r}")
+        traceback.print_exc()
         await message.answer("🤖 Сейчас не получилось выполнить умный поиск. Попробуйте ещё раз или воспользуйтесь каталогом.", reply_markup=home_kb())
         return
     rows = []
