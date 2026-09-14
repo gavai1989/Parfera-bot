@@ -518,29 +518,7 @@ for bkey, products in BRANDS.items():
 
 # Product images: one image per fragrance + concentration + gender.
 # Volume and tester variants reuse the same image.
-IMAGE_MAP = {
-    "versace eros edt (m)": "versace_eros_edt.jpg",
-    "versace eros edp (m)": "versace_eros_edp.jpg",
-    "versace eros parfume (m)": "versace_eros_parfum.jpg",
-    "versace eros flame edp (m)": "versace_eros_flame.jpg",
-    "versace eros energy edp (m)": "versace_eros_energy.jpg",
-    "versace eros najim parfume (m)": "versace_eros_najim.jpg",
-    "versace eau fraiche edt (m)": "versace_eau_fraiche.jpg",
-    "versace eau fraiche extreme edp (m)": "versace_eau_fraiche_extreme.jpg",
-    "versace pour homme dylan blue pour homme edt (m)": "versace_dylan_blue.jpg",
-    "versace pour homme edt (m)": "versace_pour_homme.jpg",
-    "versace pour homme oud noir edp (m)": "versace_oud_noir.jpg",
-    "versace pour femme dylan turquoise edt (w)": "versace_dylan_turquoise.jpg",
-    "versace pour femme dylan purple edp (w)": "versace_dylan_purple.jpg",
-    "versace bright crystal edt (w)": "versace_bright_crystal.jpg",
-    "versace bright crystal parfum (w)": "versace_bright_crystal_parfum.jpg",
-    "versace bright crystal absolu edp (w)": "versace_bright_crystal_absolu.jpg",
-    "versace crystal noir edt (w)": "versace_crystal_noir.jpg",
-    "versace crystal noir parfum (w)": "versace_crystal_noir_parfum.jpg",
-    "versace yellow diamond edt (w)": "versace_yellow_diamond.jpg",
-    "versace crystal emerald edp (w)": "versace_crystal_emerald.jpg",
-    "versace woman edp (w)": "versace_woman.jpg",
-}
+IMAGE_MAP = {}
 for group_name, filename in IMAGE_MAP.items():
     for p in GROUPS.get(norm(group_name), []):
         p["image_url"] = os.path.join("images", filename)
@@ -726,7 +704,7 @@ def ai_tool_result(candidates: List[dict]) -> dict:
 
 
 async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
-    """Run PARFERA AI with verified catalog search results only."""
+    """PARFERA AI: search real catalog, then rank verified IDs and build text/buttons from the same IDs."""
     if OPENAI_CLIENT is None:
         return ("🤖 <b>Умный помощник пока не подключён.</b>\n\nНо поиск по каталогу уже работает. Нажмите «🔎 Поиск» или напишите название бренда/аромата.", [])
 
@@ -737,16 +715,16 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
     tool = {
         "type": "function",
         "name": "search_catalog",
-        "description": "Проверить конкретный бренд, аромат или кандидата по реальному каталогу PARFERA. Для описательного запроса сначала выбери конкретные названия-кандидаты из своих знаний и проверяй их по одному. Для описательного запроса сразу проверь 3–5 конкретных кандидатов; несколько вызовов инструмента можно выполнять одновременно.",
+        "description": "Проверить конкретный бренд, аромат или кандидата по реальному каталогу PARFERA.",
         "strict": True,
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Конкретное название аромата или бренда для проверки. Не передавай сюда весь описательный запрос клиента."},
-                "brand": {"type": "string", "description": "Бренд, если его нужно отдельно ограничить. Иначе пустая строка."},
-                "gender": {"type": "string", "enum": ["", "m", "w", "u"], "description": "m мужской, w женский, u унисекс. Иначе пустая строка."},
-                "max_price": {"anyOf": [{"type": "integer"}, {"type": "null"}], "description": "Максимальная цена в рублях, если клиент её указал; иначе null."},
-                "volume": {"anyOf": [{"type": "integer"}, {"type": "null"}], "description": "Желаемый объём в мл, если указан; иначе null."},
+                "query": {"type": "string", "description": "Конкретное название аромата или бренда."},
+                "brand": {"type": "string", "description": "Бренд, если нужен отдельный фильтр. Иначе пустая строка."},
+                "gender": {"type": "string", "enum": ["", "m", "w", "u"]},
+                "max_price": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+                "volume": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 12}
             },
             "required": ["query", "brand", "gender", "max_price", "volume", "limit"],
@@ -755,22 +733,28 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
     }
 
     input_items = [{"role": "system", "content": AI_SYSTEM_PROMPT}] + history
-    final_text = ""
     collected: List[dict] = []
-    seen_ids = set()
+    seen_groups = set()
 
+    # Search phase: at most 3 tool rounds. All returned products are real catalog items.
     for _ in range(3):
-        response = await OPENAI_CLIENT.responses.create(model=OPENAI_MODEL, input=input_items, tools=[tool], parallel_tool_calls=True)
+        response = await OPENAI_CLIENT.responses.create(
+            model=OPENAI_MODEL,
+            input=input_items,
+            tools=[tool],
+            parallel_tool_calls=True,
+        )
         calls = [x for x in response.output if getattr(x, "type", "") == "function_call"]
         if not calls:
-            final_text = response.output_text or "Не удалось сформировать ответ. Попробуйте уточнить запрос."
             break
+
         input_items += response.output
         for call in calls:
             try:
                 args = json.loads(call.arguments or "{}")
-            except json.JSONDecodeError:
+            except Exception:
                 args = {}
+
             candidates = ai_candidate_search(
                 query=str(args.get("query") or ""),
                 brand=str(args.get("brand") or ""),
@@ -779,107 +763,120 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
                 volume=args.get("volume"),
                 limit=min(int(args.get("limit") or 5), 5),
             )
+
             for p in candidates:
-                # Deduplicate by fragrance/concentration/gender, not by volume/tester row.
-                group_id = group_key(p)
-                if group_id not in seen_ids:
-                    seen_ids.add(group_id)
+                gk = group_key(p)
+                if gk not in seen_groups:
+                    seen_groups.add(gk)
                     collected.append(p)
-            # Keep the consultant result compact and useful.
-            if len(collected) > 5:
-                collected = collected[:5]
+
             payload = json.dumps(ai_tool_result(candidates), ensure_ascii=False)
-            input_items.append({"type": "function_call_output", "call_id": call.call_id, "output": payload})
+            input_items.append({
+                "type": "function_call_output",
+                "call_id": call.call_id,
+                "output": payload
+            })
 
-    if not final_text and collected:
-        # Do the final answer in a clean, separate text-only request.
-        # Do NOT reuse the previous tool-call objects here: some Responses API
-        # models can keep requesting tools instead of emitting final text when
-        # the full tool-call history is passed back in.
-        try:
-            verified = ai_tool_result(collected[:5])
-            final_prompt = (
-                "Ты — PARFERA AI. Сформируй окончательный ответ клиенту на русском.\n"
-                f"Запрос клиента: {user_text}\n\n"
-                "Ниже только проверенные позиции из реального каталога PARFERA. "
-                "Используй ТОЛЬКО их и не придумывай товары, цены, объёмы или наличие.\n"
-                + json.dumps(verified, ensure_ascii=False) + "\n\n"
-                "Выбери 3–5 наиболее подходящих позиций. Если вариантов меньше 3, покажи столько, сколько есть. "
-                "Для каждого кратко объясни соответствие запросу, но не придумывай конкретные ноты или свойства, "
-                "если их нет в данных. Обязательно укажи название, концентрацию, объём и цену из каталога. "
-                "Пиши естественно и премиально. Используй HTML Telegram <b> и <i>, не Markdown. Не рассуждай о процессе поиска и не повторяй запрос клиента. "
-                "КРИТИЧЕСКИ ВАЖНО: в конце ответа добавь отдельной строкой строго в формате SELECTED_IDS: id1,id2,id3 — "
-                "только ID тех позиций, которые ты реально рекомендовал в тексте, в том же порядке. Не добавляй туда другие ID."
-            )
-            final_response = await OPENAI_CLIENT.responses.create(
-                model=OPENAI_MODEL,
-                input=[
-                    {"role": "system", "content": AI_SYSTEM_PROMPT},
-                    {"role": "user", "content": final_prompt},
-                ],
-                tools=[],
-            )
-            raw_final = (final_response.output_text or "").strip()
-            # AI must explicitly return the IDs it recommended. We use these IDs
-            # to build buttons, so text and buttons can never point to different products.
-            selected_match = re.search(r"SELECTED_IDS\s*:\s*([^\n]+)", raw_final, flags=re.I)
-            selected_ids = []
-            allowed = {str(p["id"]): p for p in collected[:5]}
-            if selected_match:
-                for token in selected_match.group(1).split(","):
-                    pid = token.strip().strip("` \t")
-                    if pid in allowed and pid not in selected_ids:
-                        selected_ids.append(pid)
-                raw_final = raw_final[:selected_match.start()].rstrip()
+            if len(collected) >= 12:
+                break
 
-            # Second safety net: if the model did not return IDs, recover the
-            # products it actually mentioned by matching exact catalog titles
-            # in its final text. This prevents buttons from ever pointing at
-            # products different from the written recommendations.
-            if not selected_ids:
-                lower_final = raw_final.lower()
-                for p in collected[:5]:
-                    title = fragrance_title(p).strip()
-                    if title and title.lower() in lower_final and str(p["id"]) not in selected_ids:
-                        selected_ids.append(str(p["id"]))
+        if len(collected) >= 12:
+            break
 
-            if selected_ids:
-                selected_products = [BY_ID[pid] for pid in selected_ids if pid in BY_ID]
-                collected = selected_products[:5]
-                final_text = raw_final
-            else:
-                # Never expose AI text if we cannot prove which catalog products
-                # it refers to. Fall back to verified catalog entries so text and
-                # buttons are guaranteed to correspond.
-                lines = ["💬 <b>PARFERA AI рекомендует:</b>", ""]
-                for i, p in enumerate(collected[:5], 1):
-                    price = rub(p["bottle_price_rub"]) if p.get("bottle_price_rub") else "цена уточняется"
-                    lines.append(f"<b>{i}. {html.escape(fragrance_title(p))}</b> — {p.get('volume','')} мл, {price}")
-                final_text = "\n".join(lines)
-        except Exception as e:
-            print(f"PARFERA AI finalization error: {type(e).__name__}: {e!r}")
+    if not collected:
+        history.append({"role": "assistant", "content": "Не удалось найти подходящие позиции в текущем каталоге."})
+        history[:] = history[-AI_MAX_HISTORY:]
+        AI_LAST_RESULTS[uid] = []
+        return "Не удалось найти подходящие позиции в текущем каталоге. Попробуйте указать бренд, название или бюджет.", []
 
-    if not final_text:
-        if collected:
-            lines = ["💬 <b>Подобрал варианты из каталога PARFERA:</b>", ""]
-            for p in collected[:5]:
-                prices = []
-                if p.get("bottle_price_rub"):
-                    prices.append(f"{p.get('volume','')} — {rub(p['bottle_price_rub'])}")
-                if p.get("tester_price_rub"):
-                    prices.append(f"тестер — {rub(p['tester_price_rub'])}")
-                price_text = ", ".join(prices) if prices else "цена уточняется"
-                lines.append(f"• <b>{html.escape(fragrance_title(p))}</b> — {price_text}")
-            final_text = "\n".join(lines)
-        else:
-            final_text = "Не удалось выполнить поиск. Попробуйте написать бренд или название аромата."
-    # Safety net: do not let Markdown bold markers appear literally in Telegram HTML mode.
-    final_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", final_text, flags=re.S)
-    final_text = re.sub(r"__(.+?)__", r"<b>\1</b>", final_text, flags=re.S)
+    # Rank phase: AI returns ONLY catalog IDs + short reasons.
+    verified = ai_tool_result(collected[:12])
+    rank_prompt = (
+        "Ты — PARFERA AI, премиальный консультант по парфюмерии.\n"
+        f"Запрос клиента: {user_text}\n\n"
+        "Ниже список ТОЛЬКО реально найденных позиций из каталога. "
+        "Выбери 3–5 лучших совпадений. Не придумывай новые товары.\n"
+        + json.dumps(verified, ensure_ascii=False)
+        + "\n\n"
+        "Верни ТОЛЬКО валидный JSON-массив объектов без Markdown и без пояснений.\n"
+        'Формат: [{"id":"ТОЧНЫЙ_ID_ИЗ_СПИСКА","reason":"короткая причина на русском"}, ...]\n'
+        "ID должны быть только из переданного списка. reason — максимум 1 короткое предложение, "
+        "без выдумывания конкретных нот, если их нет в данных."
+    )
+
+    selected = []
+    try:
+        rank_response = await OPENAI_CLIENT.responses.create(
+            model=OPENAI_MODEL,
+            input=[
+                {"role": "system", "content": AI_SYSTEM_PROMPT},
+                {"role": "user", "content": rank_prompt},
+            ],
+            tools=[],
+        )
+        raw = (rank_response.output_text or "").strip()
+        # Extract JSON array even if the model accidentally wrapped it in whitespace/code fences.
+        m = re.search(r"\[\s*\{.*\}\s*\]", raw, flags=re.S)
+        if m:
+            data = json.loads(m.group(0))
+            allowed = {str(p["id"]): p for p in collected[:12]}
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                pid = str(item.get("id") or "").strip()
+                if pid in allowed and pid not in {x["id"] for x in selected}:
+                    reason = str(item.get("reason") or "").strip()
+                    selected.append({"product": allowed[pid], "reason": reason[:240]})
+                if len(selected) >= 5:
+                    break
+    except Exception as e:
+        print(f"PARFERA AI ranking error: {type(e).__name__}: {e!r}")
+
+    # Guaranteed fallback: if ranking failed, use the first verified candidates.
+    if not selected:
+        for p in collected[:5]:
+            selected.append({"product": p, "reason": ""})
+
+    products = [x["product"] for x in selected[:5]]
+    AI_LAST_RESULTS[uid] = [p["id"] for p in products]
+
+    # Build the visible answer from the EXACT same product objects used for buttons.
+    # This makes text/button mismatch impossible.
+    lines = ["💬 <b>PARFERA AI рекомендует</b>", ""]
+    for i, item in enumerate(selected[:5], 1):
+        p = item["product"]
+        title = html.escape(fragrance_title(p))
+        raw_name = str(p.get("name", ""))
+        concentration = ""
+        cm = re.search(r"\b(EDP|EDT|PARFUM|EXTRAIT)\b", raw_name, re.I)
+        if cm:
+            concentration = cm.group(1).upper()
+
+        volume_text = str(p.get("volume") or "").strip()
+        price_text = rub(p["bottle_price_rub"]) if p.get("bottle_price_rub") else (
+            rub(p["tester_price_rub"]) if p.get("tester_price_rub") else "уточняется"
+        )
+
+        lines.append(f"<b>{i}. {title}</b>")
+        meta = []
+        if concentration:
+            meta.append(concentration)
+        if volume_text:
+            meta.append(f"{volume_text} мл")
+        meta.append(price_text)
+        lines.append(" · ".join(meta))
+
+        reason = item["reason"].strip()
+        if reason:
+            lines.append(f"<i>{html.escape(reason)}</i>")
+        lines.append("")
+
+    lines.append("⭐ <b>Хотите посмотреть варианты подробнее?</b>")
+    final_text = "\n".join(lines).strip()
+
     history.append({"role": "assistant", "content": final_text})
     history[:] = history[-AI_MAX_HISTORY:]
-    AI_LAST_RESULTS[uid] = [p["id"] for p in collected]
-    return final_text, collected
+    return final_text, products
 
 
 class SearchState(StatesGroup):
