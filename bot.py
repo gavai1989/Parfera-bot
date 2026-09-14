@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V21-TYPING-FIX"
+PARFERA_AI_VERSION = "V23-WEBHOOK-STABLE"
 import asyncio
 import re
 import html
@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple, Optional
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, Update
 from aiogram.filters import CommandStart
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode, ChatAction
@@ -57,6 +57,21 @@ def clean_product_name(name: str) -> str:
 
 def display_name(p):
     return clean_product_name(p.get("name", ""))
+
+
+def ai_fragrance_title(p):
+    """AI/customer option title: brand + fragrance + concentration.
+    Always shows the perfume house, including cases such as EX NIHILO Fleur Narcotique.
+    """
+    title = fragrance_title(p)
+    brand = BRAND_DISPLAY.get(BRAND_FOR_ID.get(p.get("id"), ""), "") if "BRAND_FOR_ID" in globals() else ""
+    if not brand:
+        brand = detect_brand(p.get("name", ""))
+    brand = str(brand or "").strip()
+    # Avoid duplicate brand when the cleaned fragrance title already starts with it.
+    if brand and not norm(title).startswith(norm(brand)):
+        return f"{brand} — {title}"
+    return title
 
 
 def fragrance_title(p):
@@ -966,7 +981,7 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
     lines = ["💬 <b>PARFERA AI рекомендует</b>", ""]
     for i, item in enumerate(selected[:5], 1):
         p = item["product"]
-        title = html.escape(fragrance_title(p))
+        title = html.escape(ai_fragrance_title(p))
         raw_name = str(p.get("name", ""))
         concentration = ""
         cm = re.search(r"\b(EDP|EDT|PARFUM|EXTRAIT)\b", raw_name, re.I)
@@ -1568,7 +1583,7 @@ async def ai_free_text(message: Message, state: FSMContext):
     fast_candidates = fast_ai_name_search(text, limit=12)
     if fast_candidates:
         AI_LAST_RESULTS[message.from_user.id] = [p["id"] for p in fast_candidates]
-        rows = [[InlineKeyboardButton(text=f"🧴 {fragrance_title(p)[:58]}", callback_data=f"product:{p['id']}:ai:0")] for p in fast_candidates]
+        rows = [[InlineKeyboardButton(text=f"🧴 {ai_fragrance_title(p)[:58]}", callback_data=f"product:{p['id']}:ai:0")] for p in fast_candidates]
         rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
         rows.append([InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog")])
         await message.answer(fast_ai_response(text, fast_candidates), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
@@ -1798,10 +1813,26 @@ async def health(request: web.Request):
     return web.Response(text="OK")
 
 
-async def run_web_server():
+async def telegram_webhook(request: web.Request):
+    """Receive Telegram updates via webhook and pass them to aiogram."""
+    try:
+        data = await request.json()
+        update = Update.model_validate(data, context={"bot": request.app["bot"]})
+        await dp.feed_update(request.app["bot"], update)
+        return web.Response(text="OK")
+    except Exception as e:
+        print(f"PARFERA webhook error: {type(e).__name__}: {e!r}")
+        traceback.print_exc()
+        return web.Response(status=500, text="ERROR")
+
+
+async def run_web_server(bot: Bot):
     app = web.Application()
+    app["bot"] = bot
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
+    app.router.add_post("/webhook", telegram_webhook)
+
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.environ.get("PORT", "10000"))
@@ -1814,12 +1845,17 @@ async def run_web_server():
 async def main():
     bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     runner = None
+    webhook_base = os.environ.get("PARFERA_WEBHOOK_BASE_URL", "https://parfera-bot.onrender.com").rstrip("/")
+    webhook_url = f"{webhook_base}/webhook"
     try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        runner = await run_web_server()
+        # Webhook removes the possibility of two competing getUpdates pollers
+        # during Render deploys/restarts. Do not delete the webhook on shutdown:
+        # a rolling deploy must not briefly disable the new instance.
+        runner = await run_web_server(bot)
+        await bot.set_webhook(webhook_url, drop_pending_updates=True)
         print(f"Catalog loaded: {len(PRODUCTS)} products, {len(BRAND_KEYS)} brands, {len(GROUPS)} fragrance groups")
-        print("Starting Telegram long polling...")
-        await dp.start_polling(bot, drop_pending_updates=True)
+        print(f"Telegram webhook active: {webhook_url}")
+        await asyncio.Event().wait()
     finally:
         if runner is not None:
             await runner.cleanup()
