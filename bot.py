@@ -737,7 +737,7 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
     tool = {
         "type": "function",
         "name": "search_catalog",
-        "description": "Проверить конкретный бренд, аромат или кандидата по реальному каталогу PARFERA. Для описательного запроса сначала выбери конкретные названия-кандидаты из своих знаний и проверяй их по одному. Можно вызывать инструмент несколько раз.",
+        "description": "Проверить конкретный бренд, аромат или кандидата по реальному каталогу PARFERA. Для описательного запроса сначала выбери конкретные названия-кандидаты из своих знаний и проверяй их по одному. Для описательного запроса сразу проверь 3–5 конкретных кандидатов; несколько вызовов инструмента можно выполнять одновременно.",
         "strict": True,
         "parameters": {
             "type": "object",
@@ -759,8 +759,8 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
     collected: List[dict] = []
     seen_ids = set()
 
-    for _ in range(6):
-        response = await OPENAI_CLIENT.responses.create(model=OPENAI_MODEL, input=input_items, tools=[tool], parallel_tool_calls=False)
+    for _ in range(3):
+        response = await OPENAI_CLIENT.responses.create(model=OPENAI_MODEL, input=input_items, tools=[tool], parallel_tool_calls=True)
         calls = [x for x in response.output if getattr(x, "type", "") == "function_call"]
         if not calls:
             final_text = response.output_text or "Не удалось сформировать ответ. Попробуйте уточнить запрос."
@@ -807,7 +807,7 @@ async def ai_assist(uid: int, user_text: str) -> Tuple[str, List[dict]]:
                 "Выбери 3–5 наиболее подходящих позиций. Если вариантов меньше 3, покажи столько, сколько есть. "
                 "Для каждого кратко объясни соответствие запросу, но не придумывай конкретные ноты или свойства, "
                 "если их нет в данных. Обязательно укажи название, концентрацию, объём и цену из каталога. "
-                "Пиши естественно и премиально. Используй HTML Telegram <b> и <i>, не Markdown."
+                "Пиши естественно и премиально. Используй HTML Telegram <b> и <i>, не Markdown. Не рассуждай о процессе поиска и не повторяй запрос клиента."
             )
             final_response = await OPENAI_CLIENT.responses.create(
                 model=OPENAI_MODEL,
