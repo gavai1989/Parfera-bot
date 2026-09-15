@@ -1179,17 +1179,70 @@ def gender_results(gender: str, page: int = 0):
 
 
 def search_results(query: str, page: int = 0):
-    words = [w for w in norm(query).split() if w]
-    raw = [p for p in PRODUCTS if variant_is_client_friendly(p) and all(w in SEARCH_TEXT[p["id"]] for w in words)]
-    # Search results should also be fragrance cards, not supplier rows.
+    """Universal catalog search used by the regular Search button.
+    Supports exact names, articles, Cyrillic/Latin spelling and common typos.
+    Never invents products: every result comes directly from PRODUCTS.
+    """
+    original = str(query or "").strip()
+    q = normalize_ai_query(original)
+
+    # 1) Article/SKU is the strongest exact signal.
+    q_norm = norm(original)
+    article_hits = [
+        p for p in PRODUCTS
+        if variant_is_client_friendly(p)
+        and q_norm
+        and q_norm in norm(str(p.get("article", "")))
+    ]
+
+    # 2) Use the same deterministic multilingual/fuzzy resolver as PARFERA AI.
+    # This is deliberately used here too, so the two search modes cannot disagree.
+    resolved = []
+    if not article_hits:
+        try:
+            resolved = ai_candidate_search(query=q, limit=100)
+        except Exception as e:
+            print(f"PARFERA regular search resolver error: {type(e).__name__}: {e!r}", flush=True)
+
+    raw = article_hits or resolved
+
+    # 2b) Last local pass: compare the normalized/transliterated query directly
+    # with each catalog name. This catches short names and spelling variants even
+    # if the scoring resolver is too conservative.
+    if not raw and q:
+        q_latin = q.translate(RU_TO_EN)
+        q_tokens = re.findall(r"[a-z0-9]+", q_latin)
+        direct_scored = []
+        if q_tokens:
+            for p in PRODUCTS:
+                if not variant_is_client_friendly(p):
+                    continue
+                name_latin = norm(p.get("name", "")).translate(RU_TO_EN)
+                name_tokens = re.findall(r"[a-z0-9]+", name_latin)
+                if not name_tokens:
+                    continue
+                sims = [max(token_similarity(t, nt) for nt in name_tokens) for t in q_tokens]
+                if all(v >= 0.68 for v in sims):
+                    direct_scored.append((sum(sims), p))
+        direct_scored.sort(key=lambda x: -x[0])
+        raw = [p for _, p in direct_scored[:100]]
+
+    # 3) If the user entered only a brand (including a typo/transliteration),
+    # show the brand's fragrance groups instead of returning nothing.
+    if not raw:
+        bkey = fuzzy_brand_key(q)
+        if bkey and bkey in BRAND_GROUPS:
+            raw = [variants[0] for variants in BRAND_GROUPS[bkey] if variants]
+
     matches = []
     seen = set()
-    for p in raw:
-        gk = group_key(p)
+    for item in raw:
+        gk = group_key(item)
         if gk in seen:
             continue
         seen.add(gk)
-        matches.append(p)
+        matches.append(item)
+
     start = page * PAGE_SIZE
     return matches, matches[start:start + PAGE_SIZE]
 
@@ -1606,6 +1659,7 @@ async def do_search(message: Message, state: FSMContext):
         await message.answer("Введите текст для поиска.")
         return
     USER_SEARCH[message.from_user.id] = query
+    print(f"PARFERA SEARCH QUERY: {query!r}", flush=True)
     await state.clear()
     exact_brand = brand_key_from_query(query)
     if exact_brand is not None:
@@ -1638,9 +1692,21 @@ async def ai_free_text(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     if not text or text.startswith("/"):
         return
+    print(f"PARFERA AI MESSAGE: {text!r}", flush=True)
     # FAST PATH: product-name queries are resolved entirely locally.
     # This avoids the 30–45 sec OpenAI round-trip for obvious names/typos.
     fast_candidates = fast_ai_name_search(text, limit=12)
+
+    # Universal safety net: if the ultra-fast resolver did not recognize the
+    # spelling, run the deterministic catalog resolver before touching OpenAI.
+    # This is what makes requests such as «Шанел шанс», «Шанель шанс»,
+    # «Chanel chans» and similar typos resolve to the real catalog item.
+    if not fast_candidates and is_name_like_query(text):
+        try:
+            fast_candidates = ai_candidate_search(query=text, limit=12)
+        except Exception as e:
+            print(f"PARFERA fast search fallback error: {type(e).__name__}: {e!r}", flush=True)
+
     if fast_candidates:
         AI_LAST_RESULTS[message.from_user.id] = [p["id"] for p in fast_candidates]
         rows = [[InlineKeyboardButton(text=f"🧴 {ai_fragrance_title(p)[:58]}", callback_data=f"product:{p['id']}:ai:0")] for p in fast_candidates]
