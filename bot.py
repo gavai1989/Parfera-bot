@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V25-UNIVERSAL-SPELLING"
+PARFERA_AI_VERSION = "V23-WEBHOOK-STABLE"
 import asyncio
 import re
 import html
@@ -627,13 +627,10 @@ def normalize_ai_query(text: str) -> str:
 
 def ai_search_tokens(text: str) -> List[str]:
     q = normalize_ai_query(text)
-    # Filter stopwords BEFORE transliteration, otherwise Russian words such as
-    # "женский", "свежий", "аромат" stop being recognized as stopwords.
-    ru_tokens = re.findall(r"[a-zа-я0-9]+", q)
-    ru_tokens = [w for w in ru_tokens if len(w) > 1 and w not in AI_STOPWORDS]
-    latin = " ".join(ru_tokens).translate(RU_TO_EN)
+    # Preserve Latin product names and also transliterate Cyrillic queries.
+    latin = q.translate(RU_TO_EN)
     raw_tokens = re.findall(r"[a-z0-9]+", latin)
-    return [w for w in raw_tokens if len(w) > 1]
+    return [w for w in raw_tokens if len(w) > 1 and w not in AI_STOPWORDS]
 
 
 def token_similarity(a: str, b: str) -> float:
@@ -642,6 +639,53 @@ def token_similarity(a: str, b: str) -> float:
     if a in b or b in a:
         return 0.88
     return SequenceMatcher(None, a, b).ratio()
+
+
+def fuzzy_brand_key(text: str) -> Optional[str]:
+    """Resolve a brand even when the customer writes it in Cyrillic or with typos."""
+    q_tokens = ai_search_tokens(text)
+    if not q_tokens:
+        return None
+    best_key, best_score = None, 0.0
+    for key in BRAND_KEYS:
+        label = BRAND_DISPLAY.get(key, key)
+        bt = ai_search_tokens(label)
+        if not bt:
+            continue
+        # A brand is accepted only when at least one customer token strongly
+        # resembles a brand token; this prevents generic words from becoming brands.
+        sims = [max(token_similarity(qt, x) for x in bt) for qt in q_tokens]
+        score = max(sims)
+        if score > best_score:
+            best_score, best_key = score, key
+    return best_key if best_score >= 0.76 else None
+
+
+DESCRIPTIVE_AI_WORDS = {
+    "свежий", "свежая", "свежие", "сладкий", "сладкая", "сладкие", "легкий", "легкая",
+    "легкие", "тяжелый", "теплый", "теплая", "цветочный", "цветочная", "древесный",
+    "мускусный", "вечерний", "дневной", "осенний", "зимний", "летний", "весенний",
+    "бергамот", "бергамотом", "ваниль", "ванилью", "роза", "розой", "мускус", "мускусом",
+    "похожий", "похожая", "похожие", "похожее", "аромат", "аромата", "ароматы",
+    "хочу", "ищу", "нужен", "нужна", "подбери", "подобрать", "посоветуй", "найди",
+    "мужской", "мужская", "мужское", "женский", "женская", "женское", "унисекс",
+    "до", "руб", "рублей", "на", "для", "мне", "с", "без", "осень", "зима", "лето", "весна"
+}
+
+def is_name_like_query(text: str) -> bool:
+    tokens = ai_search_tokens(text)
+    if not tokens or len(tokens) > 7:
+        return False
+    brand = fuzzy_brand_key(text)
+    if brand:
+        # With a recognized brand, the remaining words must look like a name,
+        # otherwise leave it to the semantic AI flow.
+        brand_tokens = set(ai_search_tokens(BRAND_DISPLAY.get(brand, brand)))
+        rest = [t for t in tokens if all(token_similarity(t, b) < 0.76 for b in brand_tokens)]
+        if not rest:
+            return True
+        return any(t not in DESCRIPTIVE_AI_WORDS and len(t) >= 3 for t in rest)
+    return any(t not in DESCRIPTIVE_AI_WORDS and len(t) >= 4 for t in tokens)
 
 
 def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_price: Optional[int] = None,
@@ -663,9 +707,14 @@ def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_
         blabel = norm(BRAND_DISPLAY.get(bkey, bkey))
         blabel_latin = blabel.translate(RU_TO_EN)
 
-        if brand_q and brand_q not in blabel and brand_q not in raw and brand_q.translate(RU_TO_EN) not in raw_latin:
-            if brand_tokens and not all(any(token_similarity(bt, rt) >= 0.72 for rt in re.findall(r"[a-z0-9]+", blabel_latin)) for bt in brand_tokens):
+        if brand_q:
+            requested_brand = fuzzy_brand_key(brand_q) or fuzzy_brand_key(q)
+            if requested_brand is not None and bkey != requested_brand:
                 continue
+            if requested_brand is None:
+                if brand_q not in blabel and brand_q not in raw and brand_q.translate(RU_TO_EN) not in raw_latin:
+                    if brand_tokens and not all(any(token_similarity(bt, rt) >= 0.72 for rt in re.findall(r"[a-z0-9]+", blabel_latin)) for bt in brand_tokens):
+                        continue
 
         if gender_q in {"m", "male", "м", "мужской"} and not re.search(r"\(m\)", raw, re.I):
             continue
@@ -697,6 +746,11 @@ def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_
                     score += 30 + sum(sims) * 8
                 elif any(v >= 0.78 for v in sims):
                     score += 8 + max(sims) * 5
+                elif brand_q and fuzzy_brand_key(brand_q):
+                    # For a recognized brand + descriptive word (e.g. «Шанель фреш»),
+                    # keep the search inside that brand and let the semantic ranker choose
+                    # the right fragrance instead of returning random brands.
+                    score += 2
                 else:
                     continue
         else:
@@ -750,123 +804,56 @@ def _fast_base_name(p: dict) -> str:
     return re.sub(r"\s+", " ", name).strip(" -·")
 
 
-def _search_token_similarity(a: str, b: str) -> float:
-    """Fuzzy comparison tolerant of transliteration and ordinary typos."""
-    a, b = norm(a), norm(b)
-    if not a or not b:
-        return 0.0
-    if a == b:
-        return 1.0
-    if a in b or b in a:
-        return 0.90
-    return SequenceMatcher(None, a, b).ratio()
-
-
-def _catalog_brand_match(query_tokens: List[str], brand_key: str) -> float:
-    """Return how confidently query tokens identify this catalog brand."""
-    label = norm(BRAND_DISPLAY.get(brand_key, brand_key)).translate(RU_TO_EN)
-    b_tokens = re.findall(r"[a-z0-9]+", label)
-    if not b_tokens or not query_tokens:
-        return 0.0
-    # One query token can identify a multi-word brand; every brand word does not
-    # have to be typed by the customer.
-    return max(_search_token_similarity(qt, bt) for qt in query_tokens for bt in b_tokens)
-
-
-def _looks_like_name_search(query: str, tokens: List[str]) -> bool:
-    """Distinguish product-name queries from descriptive perfume requests."""
-    q = norm(query)
-    # Explicit known aliases always count as name searches.
-    if q in QUERY_ALIASES:
-        return True
-    # A short query containing 1–4 meaningful words is usually a name/brand lookup.
-    # Longer natural-language requests should go to PARFERA AI.
-    if 1 <= len(tokens) <= 4:
-        return True
-    return False
-
-
 def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
-    """Universal local resolver for perfume names, brands and typos.
-
-    The resolver first tries to identify a real catalog brand with fuzzy
-    transliteration (e.g. "шанел" -> CHANEL, "крид" -> CREED), then scores
-    the fragrance name inside that brand. It never invents a product: every
-    returned item comes directly from PRODUCTS.
+    """Universal fast resolver for likely product-name queries.
+    Handles Cyrillic transliteration, typos and approximate brand names, while
+    deliberately handing descriptive requests to the semantic AI flow.
     """
+    if not is_name_like_query(query):
+        return []
     q = normalize_ai_query(query)
     tokens = ai_search_tokens(q)
-    if not tokens or not _looks_like_name_search(q, tokens):
+    if not tokens:
         return []
 
-    # Build one representative per fragrance/concentration/gender group.
-    groups: Dict[str, dict] = {}
+    resolved_brand = fuzzy_brand_key(query)
+    brand_tokens = set(ai_search_tokens(BRAND_DISPLAY.get(resolved_brand, resolved_brand))) if resolved_brand else set()
+
+    groups = {}
     for p in PRODUCTS:
         if not variant_is_client_friendly(p):
+            continue
+        if resolved_brand and BRAND_FOR_ID.get(p.get("id")) != resolved_brand:
             continue
         gk = group_key(p)
         if gk not in groups:
             groups[gk] = p
 
-    # 1) Resolve a brand first. This prevents "Шанель фреш" from becoming
-    # random products that merely resemble the word "fresh".
-    brand_scores = []
-    for bkey in BRAND_KEYS:
-        score = _catalog_brand_match(tokens, bkey)
-        if score >= 0.78:
-            brand_scores.append((score, bkey))
-    brand_scores.sort(reverse=True)
-    resolved_brand = brand_scores[0][1] if brand_scores else None
-    resolved_brand_score = brand_scores[0][0] if brand_scores else 0.0
-
-    pool = [p for p in groups.values() if BRAND_FOR_ID.get(p.get("id"), "") == resolved_brand] if resolved_brand else list(groups.values())
-
     scored = []
-    for p in pool:
+    for p in groups.values():
         base = _fast_base_name(p)
         base_latin = base.translate(RU_TO_EN)
         raw_tokens = re.findall(r"[a-z0-9]+", base_latin)
         if not raw_tokens:
             continue
-
-        # If a brand was confidently resolved, remove the brand-identifying
-        # token from the name comparison. The remaining tokens should match
-        # the fragrance itself (e.g. "крид авентус" -> AVENTUS).
-        name_tokens = list(tokens)
-        if resolved_brand:
-            brand_words = re.findall(r"[a-z0-9]+", norm(BRAND_DISPLAY.get(resolved_brand, resolved_brand)).translate(RU_TO_EN))
-            for qt in list(name_tokens):
-                if any(_search_token_similarity(qt, bw) >= 0.78 for bw in brand_words):
-                    name_tokens.remove(qt)
-                    break
-
-        if name_tokens:
-            sims = [max(_search_token_similarity(t, rt) for rt in raw_tokens) for t in name_tokens]
-            coverage = sum(1 for v in sims if v >= 0.68) / len(sims)
-            if coverage < 1.0:
-                continue
-            avg = sum(sims) / len(sims)
-        else:
-            sims, coverage, avg = [], 1.0, 1.0
-
-        exact_bonus = 1.0 if norm(q).translate(RU_TO_EN) in base_latin else 0.0
-        # Strong brand confidence + complete fragrance-token coverage beats
-        # accidental partial matches.
-        score = (resolved_brand_score * 80 if resolved_brand else 0) + coverage * 70 + avg * 30 + exact_bonus * 100
+        name_tokens = [t for t in tokens if not (resolved_brand and any(token_similarity(t, b) >= 0.76 for b in brand_tokens))]
+        if not name_tokens:
+            # Exact/brand-only query: don't dump the whole brand; return a few useful entries.
+            continue
+        sims = [max(token_similarity(t, rt) for rt in raw_tokens) for t in name_tokens]
+        coverage = sum(1 for v in sims if v >= 0.70) / len(sims)
+        if coverage < 0.80:
+            continue
+        avg = sum(sims) / len(sims)
+        exact_bonus = 1.0 if all(t in base_latin for t in name_tokens) else 0.0
+        score = coverage * 70 + avg * 30 + exact_bonus * 100
         scored.append((score, p))
 
     scored.sort(key=lambda row: (-row[0], ai_fragrance_title(row[1]).lower()))
-    if not scored:
+    if not scored or scored[0][0] < 78:
         return []
-
-    # Require a genuinely confident name resolution. If no brand was resolved,
-    # be stricter so descriptive phrases never become random product matches.
-    threshold_floor = 125 if resolved_brand else 80
-    if scored[0][0] < threshold_floor:
-        return []
-
     best = scored[0][0]
-    threshold = max(threshold_floor, best - 16)
+    threshold = max(78, best - 15)
     return [p for score, p in scored if score >= threshold][:max(3, min(limit, 12))]
 
 
@@ -1699,7 +1686,7 @@ async def ai_free_text(message: Message, state: FSMContext):
             pass
     rows = []
     for p in candidates[:5]:
-        title = fragrance_title(p)
+        title = ai_fragrance_title(p)
         rows.append([InlineKeyboardButton(text=f"🧴 {title[:58]}", callback_data=f"product:{p['id']}:ai:0")])
     rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
     rows.append([InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog")])
