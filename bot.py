@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V29-POLLING-UNIVERSAL-SEARCH-PHONETIC"
+PARFERA_AI_VERSION = "V32-CATALOG-AI-FINAL-UNIVERSAL-SEARCH"
 import asyncio
 import re
 import html
@@ -594,9 +594,11 @@ AI_SYSTEM_PROMPT = """
 - Никогда не придумывай товар, цену, объём или наличие.
 - Клиенту можно показывать ТОЛЬКО те товары, которые вернул search_catalog.
 - Если хочешь предложить известный тебе аромат как кандидата, сначала проверь его через search_catalog.
-- Для описательного запроса («свежий женский на осень», «сладкий подарок», «похожее на Erba Pura») используй свои знания о парфюмерии, чтобы выбрать несколько КОНКРЕТНЫХ названий-кандидатов, затем проверь каждый кандидат через search_catalog.
+- Для описательного запроса («свежий женский на осень», «сладкий подарок») учитывай пол, характер, сезон и ситуацию использования, выбери КОНКРЕТНЫЕ названия-кандидаты и обязательно проверь их через search_catalog.
+- Для запроса «похожее на X» сначала найди X в каталоге, затем сравни альтернативы прежде всего по нотам/обонятельному профилю; объясняй сходство только если клиент попросил.
 - Для запроса с названием аромата сначала ищи именно название, а не весь текст запроса.
-- Можно сделать несколько вызовов search_catalog за один запрос клиента, чтобы проверить 3–6 кандидатов.
+- Если запрос содержит явный бренд, он является ЖЁСТКИМ ФИЛЬТРОМ. Никогда не добавляй другой аромат этого бренда только потому, что он похож по написанию.
+- Можно сделать несколько вызовов search_catalog за один запрос клиента, но итоговая выдача для умного подбора — 3 лучших результата.
 - Если кандидат не найден, не показывай его и попробуй следующий.
 - Если после проверки подходящих товаров нет, честно скажи, что в текущем каталоге подходящего варианта не найдено.
 - Если клиент спрашивает «похожее на X», сначала найди X, затем предложи несколько реально найденных альтернатив. Не утверждай точную идентичность, если нет достаточных данных.
@@ -604,7 +606,7 @@ AI_SYSTEM_PROMPT = """
 - Если клиент не указал важную деталь, не задавай длинную анкету: лучше предложи 3–5 вариантов или задай один короткий вопрос.
 - Отвечай на русском, дружелюбно и премиально, как живой консультант бутика.
 - Не начинай каждый ответ с «В каталоге есть». Говори естественно: «Я бы посмотрел…», «Для вашего запроса хорошо подходят…».
-- Не перегружай ответ. Обычно достаточно 3–5 рекомендаций.
+- Не перегружай ответ. Для умного подбора показывай 3 лучших результата, если они есть.
 - В результатах показывай только парфюмерию: eau de parfum, eau de toilette, parfum, extrait и другие полноценные ароматы. Не показывай body wash, lotion, cream, gel, shampoo, deodorant, свечи, диффузоры, наборы и другую косметику.
 - Если найдено несколько вариантов одного аромата, выбирай наиболее релевантные парфюмерные версии и не засоряй выдачу дублями.
 - Используй HTML-разметку Telegram: <b>жирный</b>, <i>курсив</i>. Не используй Markdown ** или __.
@@ -793,19 +795,28 @@ DESCRIPTIVE_AI_WORDS = {
 }
 
 def is_name_like_query(text: str) -> bool:
+    """Conservative gate for concrete catalogue lookups."""
     tokens = ai_search_tokens(text)
     if not tokens or len(tokens) > 7:
         return False
+
+    meaningful = [t for t in tokens if not t.isdigit() and len(t) >= 2]
+    if not meaningful:
+        return False
+
     brand = fuzzy_brand_key(text)
     if brand:
-        # With a recognized brand, the remaining words must look like a name,
-        # otherwise leave it to the semantic AI flow.
         brand_tokens = set(ai_search_tokens(BRAND_DISPLAY.get(brand, brand)))
-        rest = [t for t in tokens if all(token_similarity(t, b) < 0.76 for b in brand_tokens)]
+        rest = [t for t in meaningful
+                if all(token_similarity(t, b) < 0.76 for b in brand_tokens)]
         if not rest:
             return True
         return any(t not in DESCRIPTIVE_AI_WORDS and len(t) >= 3 for t in rest)
-    return any(t not in DESCRIPTIVE_AI_WORDS and len(t) >= 4 for t in tokens)
+
+    return any(
+        t not in DESCRIPTIVE_AI_WORDS and not t.isdigit() and len(t) >= 4
+        for t in meaningful
+    )
 
 
 def _infer_explicit_brand_from_query(query: str) -> Optional[str]:
@@ -882,14 +893,14 @@ def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_
         score = 0.0
         if name_tokens:
             raw_tokens = re.findall(r"[a-z0-9]+", raw_latin)
-            sims = [max(token_similarity(t, rt) for rt in raw_tokens) for t in name_tokens] if raw_tokens else []
+            sims = [max(_fragrance_token_score(t, rt) for rt in raw_tokens) for t in name_tokens] if raw_tokens else []
             # Every requested fragrance word must have a strong counterpart.
             # If a brand is explicitly known, allow a slightly wider typo
             # tolerance because the hard brand filter already protects us from
             # unrelated products (e.g. "Chanel chans" -> Chanel Chance).
             # A recognized brand is a hard safety boundary, so name matching
             # can tolerate stronger phonetic/transliteration errors.
-            min_similarity = 0.58 if requested_brand is not None else 0.78
+            min_similarity = 0.72 if requested_brand is not None else 0.78
             if not sims or not all(v >= min_similarity for v in sims):
                 continue
 
@@ -911,7 +922,7 @@ def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_
             # No explicit brand: preserve broad catalogue search behaviour.
             raw_tokens = re.findall(r"[a-z0-9]+", raw_latin)
             if raw_tokens:
-                sims = [max(token_similarity(t, rt) for rt in raw_tokens) for t in tokens]
+                sims = [max(_fragrance_token_score(t, rt) for rt in raw_tokens) for t in tokens]
                 if not sims or not all(v >= 0.70 for v in sims):
                     continue
                 score = 30 + sum(sims) * 8
@@ -946,14 +957,20 @@ def ai_tool_result(candidates: List[dict]) -> dict:
             prices.append(f"флакон {p.get('volume','')} — {rub(p['bottle_price_rub'])}")
         if p.get("tester_price_rub"):
             prices.append(f"тестер {p.get('volume','')} — {rub(p['tester_price_rub'])}")
-        out.append({
+        item = {
             "id": p["id"],
             "brand": BRAND_DISPLAY.get(BRAND_FOR_ID.get(p["id"], ""), ""),
             "name": fragrance_title(p),
             "supplier_name": p.get("name", ""),
             "prices": prices,
             "gender": "мужской" if re.search(r"\(m\)", p.get("name", ""), re.I) else "женский" if re.search(r"\(w\)", p.get("name", ""), re.I) else "унисекс"
-        })
+        }
+        # Use catalogue metadata when present; never invent missing fields.
+        for key in ("description", "notes", "top_notes", "heart_notes", "base_notes",
+                    "season", "occasion", "character", "image", "photo", "in_stock"):
+            if p.get(key) not in (None, "", [], {}):
+                item[key] = p.get(key)
+        out.append(item)
     return {"count": len(out), "items": out}
 
 
@@ -1025,6 +1042,31 @@ def _token_variants(token: str) -> List[str]:
     return list(variants)
 
 
+def _fragrance_phonetic_key(token: str) -> str:
+    """Generic phonetic key for fragrance names, including RU/Latin spellings."""
+    keys = []
+    for v in _token_variants(token):
+        v = v.lower()
+        v = re.sub(r"[aeiouy]+", "", v)
+        v = v.replace("zh", "g").replace("shch", "sh").replace("ch", "sh").replace("ts", "c")
+        v = re.sub(r"(.)\\1+", r"\\1", v)
+        if v:
+            keys.append(v)
+    return max(keys, key=len, default="")
+
+
+def _fragrance_token_score(query_token: str, product_token: str) -> float:
+    """Typo/phonetic score for fragrance names."""
+    base = _name_token_score(query_token, product_token)
+    qk = _fragrance_phonetic_key(query_token)
+    pk = _fragrance_phonetic_key(product_token)
+    if qk and pk:
+        if qk == pk:
+            return max(base, 0.98)
+        return max(base, SequenceMatcher(None, qk, pk).ratio() * 0.96)
+    return base
+
+
 def _name_token_score(query_token: str, product_token: str) -> float:
     """Universal typo/transliteration score for fragrance names."""
     av = _token_variants(query_token)
@@ -1092,13 +1134,13 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
         if brand_only:
             score = 20.0
         else:
-            sims = [max(_name_token_score(t, rt) for rt in raw_tokens) for t in name_tokens]
+            sims = [max(_fragrance_token_score(t, rt) for rt in raw_tokens) for t in name_tokens]
             # Every requested name word must map to the same product.
             # When the brand is already a hard filter, allow realistic
             # phonetic/transliteration errors in the fragrance name itself.
             # Example: «диор саваж» -> SAUVAGE. The brand filter prevents
             # unrelated houses from entering the result.
-            threshold = 0.58 if resolved_brand else 0.76
+            threshold = 0.72 if resolved_brand else 0.78
             if not sims or any(v < threshold for v in sims):
                 continue
 
@@ -1122,10 +1164,29 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
     if brand_only:
         return [p for _, p in scored[:max(1, min(limit, 12))]]
 
-    # For named queries, do not fill the list with merely related products.
-    # A typo match must be close to the best match.
-    threshold = best - (16 if resolved_brand else 12)
-    return [p for score, p in scored if score >= threshold][:max(1, min(limit, 12))]
+    # For named queries, never fill the list with merely related products.
+    threshold = best - (12 if resolved_brand else 10)
+    close = [p for score, p in scored if score >= threshold]
+
+    # A concrete one-word name such as "Chance" must not expand into
+    # partial names such as "Chancery" when an exact/near-exact match exists.
+    if len(name_tokens) == 1:
+        token = name_tokens[0]
+        exactish = []
+        for p in close:
+            base_tokens = re.findall(
+                r"[a-z0-9]+", _fast_base_name(p).translate(RU_TO_EN)
+            )
+            s = max(
+                (_fragrance_token_score(token, rt) for rt in base_tokens),
+                default=0.0
+            )
+            if s >= 0.90:
+                exactish.append(p)
+        if exactish:
+            close = exactish
+
+    return close[:max(1, min(limit, 12))]
 
 
 def fast_ai_response(query: str, candidates: List[dict]) -> str:
@@ -1968,16 +2029,6 @@ async def ai_free_text(message: Message, state: FSMContext):
     # This avoids the 30–45 sec OpenAI round-trip for obvious names/typos.
     fast_candidates = fast_ai_name_search(text, limit=12)
 
-    # Universal safety net: if the ultra-fast resolver did not recognize the
-    # spelling, run the deterministic catalog resolver before touching OpenAI.
-    # This is what makes requests such as «Шанел шанс», «Шанель шанс»,
-    # «Chanel chans» and similar typos resolve to the real catalog item.
-    if not fast_candidates and is_name_like_query(text):
-        try:
-            fast_candidates = ai_candidate_search(query=text, limit=12)
-        except Exception as e:
-            print(f"PARFERA fast search fallback error: {type(e).__name__}: {e!r}", flush=True)
-
     if fast_candidates:
         AI_LAST_RESULTS[message.from_user.id] = [p["id"] for p in fast_candidates]
         rows = [[InlineKeyboardButton(text=f"🧴 {ai_fragrance_title(p)[:58]}", callback_data=f"product:{p['id']}:ai:0")] for p in fast_candidates]
@@ -1985,6 +2036,28 @@ async def ai_free_text(message: Message, state: FSMContext):
         rows.append([InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog")])
         await message.answer(fast_ai_response(text, fast_candidates), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
         return
+
+    # Never let the conversational AI broaden a concrete perfume-name query
+    # into unrelated products of the same brand. Name queries are catalogue
+    # lookups; recommendation queries are the only ones that reach OpenAI.
+    if is_name_like_query(text):
+        brand_key = fuzzy_brand_key(text)
+        name_tokens = _query_name_tokens(text, brand_key)
+        if brand_key and name_tokens:
+            print(
+                f"LOCAL SEARCH MISS / AI BLOCKED: query={text!r}, "
+                f"brand={brand_key!r}, name_tokens={name_tokens!r}",
+                flush=True,
+            )
+            await message.answer(
+                f"🔎 По запросу «{html.escape(text)}» точной позиции в каталоге не найдено.\\n\\n"
+                "Попробуйте написать название на английском или чуть иначе.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🛍 Открыть каталог", callback_data="catalog")],
+                    [InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")],
+                ]),
+            )
+            return
 
     # Telegram's "typing…" indicator expires after a few seconds, so keep
     # refreshing it while the AI is thinking/searching. This runs only for
@@ -2022,7 +2095,7 @@ async def ai_free_text(message: Message, state: FSMContext):
         except asyncio.CancelledError:
             pass
     rows = []
-    for p in candidates[:5]:
+    for p in candidates[:3]:
         title = ai_fragrance_title(p)
         rows.append([InlineKeyboardButton(text=f"🧴 {title[:58]}", callback_data=f"product:{p['id']}:ai:0")])
     rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
