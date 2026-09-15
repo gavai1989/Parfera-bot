@@ -696,10 +696,16 @@ def _brand_match_score(query_token: str, brand_token: str) -> float:
 
 
 def fuzzy_brand_key(text: str) -> Optional[str]:
-    """Resolve a brand from the query without letting fragrance words become a fake brand.
+    """Catalog-wide brand resolver.
 
-    This is catalog-wide: no individual brand is hard-coded. A brand is accepted only
-    when a query token is an exact/near-exact match for a known catalog brand token.
+    Important: many catalog brands are stored as multi-word houses (for example
+    "Christian Dior"), while customers often type only the distinctive part
+    ("Dior"). Therefore a single strong match to a distinctive brand component
+    is enough to identify a multi-word house. Generic words such as THE, PARFUM,
+    COLLECTION, etc. are never allowed to identify a brand on their own.
+
+    This is intentionally dynamic: it uses the brands detected from the current
+    catalog and does not contain one-off rules for Chanel, Dior, Versace, etc.
     """
     q = normalize_ai_query(text)
     q_latin = q.translate(RU_TO_EN)
@@ -707,30 +713,68 @@ def fuzzy_brand_key(text: str) -> Optional[str]:
     if not q_tokens:
         return None
 
-    best_key, best_score = None, 0.0
+    generic = {
+        "the", "ea", "eau", "parfum", "parfums", "perfume", "collection",
+        "collector", "for", "men", "women", "woman", "homme", "femme",
+        "original", "house", "de", "di"
+    }
+
+    # Count distinctive brand components. A component that belongs to only one
+    # known house is safe to use for a one-word customer query.
+    token_to_keys: Dict[str, set] = {}
+    brand_tokens_by_key: Dict[str, List[str]] = {}
     for key in BRAND_KEYS:
         label = norm(BRAND_DISPLAY.get(key, key))
         bt = re.findall(r"[a-z0-9]+", label.translate(RU_TO_EN))
+        bt = [b for b in bt if b not in generic]
+        brand_tokens_by_key[key] = bt
+        for b in set(bt):
+            token_to_keys.setdefault(b, set()).add(key)
+
+    best_key, best_score = None, 0.0
+    for key in BRAND_KEYS:
+        bt = brand_tokens_by_key.get(key, [])
         if not bt:
             continue
 
-        # Multi-word brands: reward a full phrase/token coverage very strongly.
-        token_scores = []
+        # For each brand component find its best match in the user's query.
+        component_matches = []
         for b in bt:
-            token_scores.append(max((_brand_match_score(qt, b) for qt in q_tokens), default=0.0))
-        coverage = sum(v >= 0.84 for v in token_scores) / len(bt)
-        avg = sum(token_scores) / len(token_scores)
-        phrase_bonus = 0.0
-        if len(bt) > 1 and " ".join(bt) in q_latin:
-            phrase_bonus = 0.20
-        score = coverage * 0.70 + avg * 0.30 + phrase_bonus
+            best = max((_brand_match_score(qt, b) for qt in q_tokens), default=0.0)
+            component_matches.append(best)
 
-        # Single-word brand requires one strong token. Multi-word brand requires
-        # all/near-all words so a random fragrance word cannot hijack the scope.
-        if len(bt) == 1:
-            accepted = token_scores[0] >= 0.84
-        else:
-            accepted = coverage >= 0.75 and avg >= 0.82
+        strong = [v for v in component_matches if v >= 0.84]
+        coverage = len(strong) / len(bt)
+        avg = sum(component_matches) / len(component_matches)
+
+        # Exact/near-exact phrase or full multi-word match is strongest.
+        phrase_bonus = 0.20 if len(bt) > 1 and " ".join(bt) in q_latin else 0.0
+        score = coverage * 0.55 + avg * 0.25 + phrase_bonus
+
+        accepted = False
+
+        # Full/near-full multi-word brand.
+        if len(bt) > 1 and coverage >= 0.75 and avg >= 0.82:
+            accepted = True
+
+        # Customer wrote only one distinctive component, e.g. "dior" for
+        # "Christian Dior", "malone" for "Jo Malone", etc.
+        if not accepted:
+            for qt in q_tokens:
+                if qt in generic or len(qt) < 4:
+                    continue
+                for b in bt:
+                    sim = _brand_match_score(qt, b)
+                    if sim >= 0.90 and len(token_to_keys.get(b, set())) == 1:
+                        single_score = 0.88 + min(0.10, (len(qt) - 4) * 0.01)
+                        if single_score > best_score:
+                            best_score = single_score
+                            best_key = key
+                        accepted = True
+                        break
+                if accepted:
+                    break
+
         if accepted and score > best_score:
             best_score, best_key = score, key
 
