@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V23-WEBHOOK-STABLE"
+PARFERA_AI_VERSION = "V24-POLLING-STABLE"
 import asyncio
 import re
 import html
@@ -1877,11 +1877,14 @@ async def telegram_webhook(request: web.Request):
     """Receive Telegram updates via webhook and pass them to aiogram."""
     try:
         data = await request.json()
+        update_id = data.get("update_id", "?") if isinstance(data, dict) else "?"
+        print(f"WEBHOOK UPDATE RECEIVED: update_id={update_id}", flush=True)
         update = Update.model_validate(data, context={"bot": request.app["bot"]})
         await dp.feed_update(request.app["bot"], update)
+        print(f"WEBHOOK UPDATE PROCESSED: update_id={update_id}", flush=True)
         return web.Response(text="OK")
     except Exception as e:
-        print(f"PARFERA webhook error: {type(e).__name__}: {e!r}")
+        print(f"PARFERA webhook error: {type(e).__name__}: {e!r}", flush=True)
         traceback.print_exc()
         return web.Response(status=500, text="ERROR")
 
@@ -1905,17 +1908,39 @@ async def run_web_server(bot: Bot):
 async def main():
     bot = Bot(TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     runner = None
-    webhook_base = os.environ.get("PARFERA_WEBHOOK_BASE_URL", "https://parfera-bot.onrender.com").rstrip("/")
-    webhook_url = f"{webhook_base}/webhook"
     try:
-        # Webhook removes the possibility of two competing getUpdates pollers
-        # during Render deploys/restarts. Do not delete the webhook on shutdown:
-        # a rolling deploy must not briefly disable the new instance.
+        # Use Telegram long polling for the Render service. This is more reliable
+        # here than a custom webhook and avoids Telegram -> Render webhook routing issues.
+        # Keep the HTTP server alive so Render health checks continue to work.
         runner = await run_web_server(bot)
-        await bot.set_webhook(webhook_url, drop_pending_updates=True)
-        print(f"Catalog loaded: {len(PRODUCTS)} products, {len(BRAND_KEYS)} brands, {len(GROUPS)} fragrance groups")
-        print(f"Telegram webhook active: {webhook_url}")
-        await asyncio.Event().wait()
+
+        print("TELEGRAM MODE: LONG POLLING", flush=True)
+        try:
+            await bot.delete_webhook(drop_pending_updates=False)
+            print("WEBHOOK CLEARED OK", flush=True)
+        except Exception as e:
+            print(f"WEBHOOK CLEAR ERROR: {type(e).__name__}: {e!r}", flush=True)
+            traceback.print_exc()
+            raise
+
+        try:
+            info = await bot.get_webhook_info()
+            print(
+                "WEBHOOK AFTER CLEAR: "
+                f"url={info.url!r}, pending_update_count={info.pending_update_count}",
+                flush=True,
+            )
+        except Exception as e:
+            print(f"WEBHOOK INFO ERROR: {type(e).__name__}: {e!r}", flush=True)
+
+        print(f"Catalog loaded: {len(PRODUCTS)} products, {len(BRAND_KEYS)} brands, {len(GROUPS)} fragrance groups", flush=True)
+        print("STARTING TELEGRAM POLLING...", flush=True)
+
+        await dp.start_polling(
+            bot,
+            drop_pending_updates=False,
+            allowed_updates=dp.resolve_used_update_types(),
+        )
     finally:
         if runner is not None:
             await runner.cleanup()
