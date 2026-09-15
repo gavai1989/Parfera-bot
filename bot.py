@@ -805,26 +805,55 @@ def _fast_base_name(p: dict) -> str:
 
 
 def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
-    """Universal fast resolver for likely product-name queries.
-    Handles Cyrillic transliteration, typos and approximate brand names, while
-    deliberately handing descriptive requests to the semantic AI flow.
+    """Universal fast resolver for product-name queries.
+
+    Important rule: when the customer explicitly names a brand, results are
+    strictly limited to that brand. This prevents queries such as
+    «Шанел шанс» from returning look-alikes such as CHANCERY, CHANCE IT, etc.
+    Fuzzy matching is used for the fragrance name itself, but brand scope is
+    deterministic and strict.
     """
     if not is_name_like_query(query):
         return []
+
     q = normalize_ai_query(query)
     tokens = ai_search_tokens(q)
     if not tokens:
         return []
 
-    resolved_brand = fuzzy_brand_key(query)
-    brand_tokens = set(ai_search_tokens(BRAND_DISPLAY.get(resolved_brand, resolved_brand))) if resolved_brand else set()
+    # Resolve an explicitly written brand first. Because q is already passed
+    # through QUERY_ALIASES/transliteration, this works for Cyrillic, Latin and
+    # common misspellings such as «шанел» -> «chanel».
+    resolved_brand = None
+    q_latin = q.translate(RU_TO_EN)
+    for bkey in BRAND_KEYS:
+        label = norm(BRAND_DISPLAY.get(bkey, bkey))
+        label_latin = label.translate(RU_TO_EN)
+        label_tokens = re.findall(r"[a-z0-9]+", label_latin)
+        if not label_tokens:
+            continue
+        # A multi-word brand must have all its meaningful tokens represented.
+        if all(bt in q_latin.split() for bt in label_tokens):
+            resolved_brand = bkey
+            break
+
+    if resolved_brand is None:
+        resolved_brand = fuzzy_brand_key(q)
+
+    brand_tokens = set(
+        ai_search_tokens(BRAND_DISPLAY.get(resolved_brand, resolved_brand))
+    ) if resolved_brand else set()
 
     groups = {}
     for p in PRODUCTS:
         if not variant_is_client_friendly(p):
             continue
+
+        # Once a brand is explicitly recognized, NEVER allow another brand
+        # into the result set.
         if resolved_brand and BRAND_FOR_ID.get(p.get("id")) != resolved_brand:
             continue
+
         gk = group_key(p)
         if gk not in groups:
             groups[gk] = p
@@ -836,25 +865,42 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
         raw_tokens = re.findall(r"[a-z0-9]+", base_latin)
         if not raw_tokens:
             continue
-        name_tokens = [t for t in tokens if not (resolved_brand and any(token_similarity(t, b) >= 0.76 for b in brand_tokens))]
+
+        # Remove brand words from the query before matching the fragrance name.
+        name_tokens = [
+            t for t in tokens
+            if not (resolved_brand and any(token_similarity(t, b) >= 0.76 for b in brand_tokens))
+        ]
+
         if not name_tokens:
-            # Exact/brand-only query: don't dump the whole brand; return a few useful entries.
             continue
+
         sims = [max(token_similarity(t, rt) for rt in raw_tokens) for t in name_tokens]
-        coverage = sum(1 for v in sims if v >= 0.70) / len(sims)
-        if coverage < 0.80:
+
+        # Every meaningful name token must have a strong counterpart.
+        coverage = sum(1 for v in sims if v >= 0.78) / len(sims)
+        if coverage < 1.0:
             continue
+
         avg = sum(sims) / len(sims)
-        exact_bonus = 1.0 if all(t in base_latin for t in name_tokens) else 0.0
-        score = coverage * 70 + avg * 30 + exact_bonus * 100
+
+        # Exact whole-token match is stronger than substring matching.
+        exact_count = sum(1 for t in name_tokens if t in raw_tokens)
+        exact_bonus = exact_count / len(name_tokens)
+
+        score = coverage * 100 + avg * 40 + exact_bonus * 120
         scored.append((score, p))
 
     scored.sort(key=lambda row: (-row[0], ai_fragrance_title(row[1]).lower()))
-    if not scored or scored[0][0] < 78:
+
+    if not scored:
         return []
+
+    # Keep only genuinely close matches to the best result. A partial word
+    # such as "chance" inside "chancery" cannot compete with exact CHANCE.
     best = scored[0][0]
-    threshold = max(78, best - 15)
-    return [p for score, p in scored if score >= threshold][:max(3, min(limit, 12))]
+    threshold = max(145, best - 35)
+    return [p for score, p in scored if score >= threshold][:max(1, min(limit, 12))]
 
 
 def fast_ai_response(query: str, candidates: List[dict]) -> str:
