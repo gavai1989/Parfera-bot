@@ -1511,7 +1511,7 @@ async def brand_page(callback: CallbackQuery):
 async def ai_start(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await edit_or_replace(callback.message,
-        "💬 <b>PARFERA AI</b>\n\nПросто напишите, что вы ищете — я помогу найти реальные позиции в каталоге PARFERA.\n\nНапример:\n• «Женский сладкий до 7000 ₽»\n• «Versace Eros 100 мл»\n• «Мужской свежий аромат»\n• «Что есть похожее на Erba Pura?»",
+        "💬 <b>PARFERA AI</b>\n\nПросто напишите, что вы ищете — я помогу найти реальные позиции в каталоге PARFERA.\n\n🧠 <b>Почему умный подбор может занять немного времени?</b>\nPARFERA AI анализирует ваш запрос, учитывает характер аромата, пол, сезон, настроение и другие пожелания, затем подбирает и проверяет реальные позиции нашего каталога. Поэтому такой подбор может занять несколько секунд — это нормально, бот не завис.\n\n⚡ <b>Если нужно просто быстро найти конкретный аромат</b>, используйте обычный поиск по каталогу — он работает значительно быстрее и ищет по бренду, названию или артикулу.\n\nНапример:\n• «Женский сладкий до 7000 ₽»\n• «Versace Eros 100 мл»\n• «Мужской свежий аромат»\n• «Что есть похожее на Erba Pura?»",
         InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
     await callback.answer()
 
@@ -1535,7 +1535,7 @@ async def ai_back(callback: CallbackQuery):
 @dp.callback_query(F.data.in_({"search", "catalog_search"}))
 async def search(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SearchState.waiting)
-    await edit_or_replace(callback.message, "🔎 <b>Поиск по каталогу</b>\n\nВведите бренд, название аромата или артикул.\n\nНапример: <b>Versace Eros</b>, <b>Erba Pura</b> или <b>000-002</b>.", back_home_kb())
+    await edit_or_replace(callback.message, "🔎 <b>Быстрый поиск по каталогу</b>\n\nВведите бренд, название аромата или артикул.\n\n⚡ <b>Этот поиск работает быстро:</b> он сразу проверяет наш каталог по названию, бренду или артикулу и не использует длительный AI-анализ.\n\n🧠 <b>Нужен подбор по описанию?</b> Например: «женский свежий с бергамотом на осень» — выбирайте PARFERA AI. Такой подбор может занять немного больше времени, потому что AI анализирует пожелания и подбирает подходящие реальные позиции.\n\nНапример: <b>Versace Eros</b>, <b>Erba Pura</b> или <b>000-002</b>.", back_home_kb())
     await callback.answer()
 
 
