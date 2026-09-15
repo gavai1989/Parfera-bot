@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V28-POLLING-UNIVERSAL-ALL-BRANDS-SEARCH"
+PARFERA_AI_VERSION = "V29-POLLING-UNIVERSAL-SEARCH-PHONETIC"
 import asyncio
 import re
 import html
@@ -887,7 +887,9 @@ def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_
             # If a brand is explicitly known, allow a slightly wider typo
             # tolerance because the hard brand filter already protects us from
             # unrelated products (e.g. "Chanel chans" -> Chanel Chance).
-            min_similarity = 0.68 if requested_brand is not None else 0.78
+            # A recognized brand is a hard safety boundary, so name matching
+            # can tolerate stronger phonetic/transliteration errors.
+            min_similarity = 0.58 if requested_brand is not None else 0.78
             if not sims or not all(v >= min_similarity for v in sims):
                 continue
 
@@ -983,27 +985,71 @@ def _query_name_tokens(query: str, resolved_brand: Optional[str]) -> List[str]:
     return remaining
 
 
+def _token_variants(token: str) -> List[str]:
+    """Generate safe multilingual/phonetic variants for a single search token.
+
+    This is deliberately generic rather than a list of perfume-specific aliases.
+    It helps Russian phonetic spellings such as «саваж» match French/Latin
+    catalogue spellings such as SAUVAGE.
+    """
+    base = canonical_token(token).lower()
+    if not base:
+        return []
+
+    variants = {base}
+
+    # Common Russian -> Latin phonetic alternatives.
+    replacements = (
+        ("shch", "sh"),
+        ("zh", "g"),
+        ("kh", "h"),
+        ("ch", "sh"),
+        ("ts", "c"),
+    )
+    for src, dst in replacements:
+        if src in base:
+            variants.add(base.replace(src, dst))
+
+    # Reverse variants cover cases where the catalogue uses the French/English
+    # spelling while the customer entered a Russian phonetic spelling.
+    reverse = (
+        ("g", "zh"),
+        ("h", "kh"),
+        ("sh", "ch"),
+        ("c", "ts"),
+    )
+    for src, dst in reverse:
+        if src in base:
+            variants.add(base.replace(src, dst))
+
+    return list(variants)
+
+
 def _name_token_score(query_token: str, product_token: str) -> float:
     """Universal typo/transliteration score for fragrance names."""
-    a = canonical_token(query_token).lower()
-    b = canonical_token(product_token).lower()
-    if not a or not b:
+    av = _token_variants(query_token)
+    bv = _token_variants(product_token)
+    if not av or not bv:
         return 0.0
-    if a == b:
-        return 1.0
-    # Prefix/near-prefix mistakes are common (chans -> chance, aventu -> aventus).
-    if min(len(a), len(b)) >= 4:
-        common = 0
-        for x, y in zip(a, b):
-            if x != y:
-                break
-            common += 1
-        if common >= 4:
-            return max(0.90, SequenceMatcher(None, a, b).ratio())
-    if a in b or b in a:
-        ratio = SequenceMatcher(None, a, b).ratio()
-        return max(0.86, ratio)
-    return SequenceMatcher(None, a, b).ratio()
+
+    best = 0.0
+    for a in av:
+        for b in bv:
+            if a == b:
+                best = max(best, 1.0)
+                continue
+            if min(len(a), len(b)) >= 4:
+                common = 0
+                for x, y in zip(a, b):
+                    if x != y:
+                        break
+                    common += 1
+                if common >= 4:
+                    best = max(best, max(0.90, SequenceMatcher(None, a, b).ratio()))
+            if a in b or b in a:
+                best = max(best, max(0.86, SequenceMatcher(None, a, b).ratio()))
+            best = max(best, SequenceMatcher(None, a, b).ratio())
+    return best
 
 
 def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
@@ -1048,7 +1094,11 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
         else:
             sims = [max(_name_token_score(t, rt) for rt in raw_tokens) for t in name_tokens]
             # Every requested name word must map to the same product.
-            threshold = 0.68 if resolved_brand else 0.76
+            # When the brand is already a hard filter, allow realistic
+            # phonetic/transliteration errors in the fragrance name itself.
+            # Example: «диор саваж» -> SAUVAGE. The brand filter prevents
+            # unrelated houses from entering the result.
+            threshold = 0.58 if resolved_brand else 0.76
             if not sims or any(v < threshold for v in sims):
                 continue
 
