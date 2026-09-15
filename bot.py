@@ -611,6 +611,62 @@ QUERY_ALIASES = {
     "эрос": "eros",
 }
 
+
+# Universal customer spelling/meaning aliases. These are intentionally small and
+# generic: they help bridge common Russian phonetic spellings and obvious perfume
+# terminology without hard-coding individual products.
+SEARCH_WORD_ALIASES = {
+    "фреш": "fraiche", "фреш": "fraiche", "fresh": "fraiche",
+    "фреша": "fraiche", "фреший": "fraiche",
+    "шанел": "chanel", "шанель": "chanel",
+    "блу": "bleu", "блю": "bleu", "бе": "de", "де": "de",
+    "крид": "creed", "кридд": "creed",
+    "флер": "fleur", "наркотик": "narcotique", "наркотикк": "narcotique",
+    "эрба": "erba", "пура": "pura", "авентус": "aventus",
+    "кирке": "kirke", "кирка": "kirke", "теренци": "terenzi",
+    "тизиана": "tiziana", "версаче": "versace", "версаче": "versace",
+    "ерос": "eros", "эрос": "eros", "шанс": "chance",
+    "диор": "dior", "гиванши": "givenchy", "живанши": "givenchy",
+    "томфорд": "tomford", "том форд": "tomford",
+}
+
+
+def apply_search_word_aliases(text: str) -> str:
+    q = norm(text).replace("’", "'")
+    # Long phrases first, then individual words.
+    for src, dst in sorted(SEARCH_WORD_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
+        q = re.sub(r"(?<![a-zа-яё])" + re.escape(src) + r"(?![a-zа-яё])", dst, q, flags=re.I)
+    return q
+
+
+def _catalog_brand_match(tokens: List[str]) -> Optional[str]:
+    """Resolve a possibly misspelled brand from the actual catalog."""
+    if not tokens:
+        return None
+    best_key, best_score = None, 0.0
+    # Compare against canonical catalog brand words; this works for typos such as
+    # shanel/chanel and phonetic Russian spellings after aliases are applied.
+    for key in BRAND_KEYS:
+        label = norm(BRAND_DISPLAY.get(key, key)).translate(RU_TO_EN)
+        brand_words = re.findall(r"[a-z0-9]+", label)
+        if not brand_words:
+            continue
+        score = 0.0
+        used = 0
+        for t in tokens:
+            ts = t.translate(RU_TO_EN)
+            if not ts:
+                continue
+            v = max(token_similarity(ts, bw) for bw in brand_words)
+            if v >= 0.76:
+                score += v
+                used += 1
+        if used:
+            score = score / used + (0.08 if used == len(tokens) else 0)
+            if score > best_score:
+                best_key, best_score = key, score
+    return best_key if best_score >= 0.76 else None
+
 RU_TO_EN = str.maketrans({
     "а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e","ж":"zh","з":"z","и":"i","й":"y",
     "к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r","с":"s","т":"t","у":"u","ф":"f",
@@ -748,15 +804,21 @@ def _fast_base_name(p: dict) -> str:
 
 
 def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
-    """Resolve a likely product-name query locally, with typos and Russian transliteration.
-    No OpenAI/network call is made. Returns one representative per concentration/gender group.
+    """Fast, catalog-only name resolver with universal typo/phonetic handling.
+
+    Strategy:
+    1) normalize common Russian/phonetic spellings;
+    2) if a brand can be confidently resolved, search the fragrance name *inside
+       that brand* (prevents "Chanel fresh" from returning random brands);
+    3) require meaningful name-token coverage, with fuzzy matching for typos;
+    4) return only real catalog groups.
     """
-    q = normalize_ai_query(query)
-    tokens = ai_search_tokens(q)
+    q = apply_search_word_aliases(normalize_ai_query(query))
+    tokens = [t for t in re.findall(r"[a-z0-9]+", q.translate(RU_TO_EN)) if len(t) > 1 and t not in AI_STOPWORDS]
     if not tokens:
         return []
 
-    # Build candidates once from the in-memory catalog.
+    # Build one representative per fragrance/concentration/gender group.
     groups = {}
     for p in PRODUCTS:
         if not variant_is_client_friendly(p):
@@ -765,37 +827,65 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
         if gk not in groups:
             groups[gk] = p
 
+    # Resolve a brand from the beginning/whole query. Once resolved, remove the
+    # brand words from the search tokens so only the fragrance name drives ranking.
+    brand_key = _catalog_brand_match(tokens)
+    brand_words = []
+    if brand_key:
+        brand_words = re.findall(r"[a-z0-9]+", norm(BRAND_DISPLAY.get(brand_key, brand_key)).translate(RU_TO_EN))
+
+    name_tokens = list(tokens)
+    if brand_key:
+        remaining = []
+        used_brand = [False] * len(brand_words)
+        for t in name_tokens:
+            ts = t.translate(RU_TO_EN)
+            matched = False
+            for i, bw in enumerate(brand_words):
+                if not used_brand[i] and token_similarity(ts, bw) >= 0.76:
+                    used_brand[i] = True
+                    matched = True
+                    break
+            if not matched:
+                remaining.append(t)
+        name_tokens = remaining
+
+    # A brand-only query is better handled by the regular catalog UI than by
+    # pretending that the first 12 fragrances are "recommendations".
+    if brand_key and not name_tokens:
+        return []
+
     scored = []
-    q_full = q.translate(RU_TO_EN)
     for p in groups.values():
+        if brand_key and BRAND_FOR_ID.get(p.get("id")) != brand_key:
+            continue
         base = _fast_base_name(p)
         base_latin = base.translate(RU_TO_EN)
         raw_tokens = re.findall(r"[a-z0-9]+", base_latin)
         if not raw_tokens:
             continue
-        sims = [max(token_similarity(t, rt) for rt in raw_tokens) for t in tokens]
-        coverage = sum(1 for v in sims if v >= 0.68) / len(sims)
+
+        sims = [max(token_similarity(t.translate(RU_TO_EN), rt) for rt in raw_tokens) for t in name_tokens]
+        coverage = sum(1 for v in sims if v >= 0.66) / len(name_tokens)
         if coverage < 0.75:
             continue
         avg = sum(sims) / len(sims)
-        exact_bonus = 1.0 if q_full in base_latin else 0.0
-        # Prefer names where every meaningful query word is represented.
-        score = coverage * 70 + avg * 30 + exact_bonus * 100
+        exact_bonus = 1.0 if q.translate(RU_TO_EN) in base_latin else 0.0
+        # Strong bonus when the complete name token sequence appears in order.
+        compact_base = re.sub(r"[^a-z0-9]+", " ", base_latin).strip()
+        compact_q = " ".join(name_tokens)
+        sequence_bonus = 1.0 if compact_q and compact_q in compact_base else 0.0
+        score = coverage * 70 + avg * 30 + exact_bonus * 80 + sequence_bonus * 45
         scored.append((score, p))
 
-    scored.sort(key=lambda row: (-row[0], fragrance_title(row[1]).lower()))
-    if not scored:
+    scored.sort(key=lambda row: (-row[0], ai_fragrance_title(row[1]).lower()))
+    if not scored or scored[0][0] < 78:
         return []
 
-    # A real name/typo match should be confidently above random fuzzy matches.
-    if scored[0][0] < 75:
-        return []
-
-    # For a resolved fragrance name, show all matching concentrations/genders, not one random item.
+    # Only keep close matches; this is the key protection against random results.
     best = scored[0][0]
-    threshold = max(75, best - 18)
+    threshold = max(78, best - (16 if brand_key else 12))
     return [p for score, p in scored if score >= threshold][:max(3, min(limit, 12))]
-
 
 def fast_ai_response(query: str, candidates: List[dict]) -> str:
     lines = ["💬 <b>PARFERA AI</b>", "", f"Нашёл варианты по запросу «{html.escape(query)}»:", ""]
