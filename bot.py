@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V33-WORDSTAT-XERJOFF-AMOUAGE"
+PARFERA_AI_VERSION = "V34-WORDSTAT-XERJOFF-STRICT-NAME"
 import asyncio
 import re
 import html
@@ -1682,6 +1682,15 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
 
             exact = sum(1 for t in name_tokens if any(t == rt for rt in raw_tokens))
             avg = sum(sims) / len(sims)
+
+            # For an explicitly recognized brand, an exact product token is a
+            # strong anchor. This prevents unrelated same-brand items from
+            # winning just because a short word has a misleading fuzzy score.
+            # Example: «ксерджофф наксос» must prefer NAXOS, not K'BRIDGE CLUB.
+            if resolved_brand and exact == 0:
+                if not all(v >= 0.88 for v in sims):
+                    continue
+
             score = avg * 100 + exact * 45
 
             # Penalize products where the best match is only a weak partial word.
