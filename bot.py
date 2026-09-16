@@ -1631,10 +1631,34 @@ def _fast_base_name(p: dict) -> str:
 
 
 def _query_name_tokens(query: str, resolved_brand: Optional[str]) -> List[str]:
-    """Return meaningful fragrance words after removing the resolved brand."""
-    tokens = ai_search_tokens(query)
+    """Return meaningful fragrance words after removing the resolved brand.
+
+    Important for Russian brand spellings: a customer may write a house name
+    phonetically (e.g. «парфюм де марли»). Transliteration token-by-token can
+    turn that into several words that do not individually resemble the Latin
+    brand stored in the catalog. Remove a resolved brand alias as a phrase
+    before doing token-level matching.
+    """
+    q = norm(query)
+    if resolved_brand:
+        # First remove any explicit catalog-wide brand alias as a whole phrase.
+        # This is generic: every alias registered in BRAND_QUERY_ALIASES is
+        # handled, not only PARFUMS DE MARLY.
+        for alias_src, alias_brand in sorted(
+            BRAND_QUERY_ALIASES.items(), key=lambda pair: len(pair[0]), reverse=True
+        ):
+            if norm(alias_brand) == norm(BRAND_DISPLAY.get(resolved_brand, resolved_brand)):
+                q = re.sub(
+                    rf"(?<![a-z0-9а-яё]){re.escape(norm(alias_src))}(?![a-z0-9а-яё])",
+                    " ",
+                    q,
+                )
+        q = re.sub(r"\s+", " ", q).strip()
+
+    tokens = ai_search_tokens(q)
     if not resolved_brand:
         return tokens
+
     bt = ai_search_tokens(BRAND_DISPLAY.get(resolved_brand, resolved_brand))
     remaining = []
     used = set()
