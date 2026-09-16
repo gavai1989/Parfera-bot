@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V40-UNIVERSAL-BRAND-QUERY-NORMALIZER"
+PARFERA_AI_VERSION = "V41-SEARCH-ALIAS-CHAIN-FIX"
 import asyncio
 import re
 import html
@@ -1198,10 +1198,25 @@ RU_TO_EN = str.maketrans({
 })
 
 def normalize_ai_query(text: str) -> str:
+    """Normalize customer text through a bounded chain of aliases.
+
+    A brand alias can create a new full-query Wordstat alias. For example,
+    «парфюм де марли альтаир» first becomes «parfums de marly altair» and
+    then «parfums de marly althair». One-pass normalization misses stage two.
+    """
     q = norm(text).replace("’", "'")
-    for alias_src, alias_dst in sorted(QUERY_ALIASES.items(), key=lambda pair: len(pair[0]), reverse=True):
-        if alias_src in q:
-            return q.replace(alias_src, alias_dst)
+    aliases = sorted(QUERY_ALIASES.items(), key=lambda pair: len(pair[0]), reverse=True)
+    for _ in range(4):
+        changed = False
+        for alias_src, alias_dst in aliases:
+            if alias_src and alias_src in q:
+                new_q = q.replace(alias_src, alias_dst)
+                if new_q != q:
+                    q = new_q
+                    changed = True
+                    break
+        if not changed:
+            break
     return q
 
 
@@ -1506,11 +1521,12 @@ def ai_candidate_search(query: str = "", brand: str = "", gender: str = "", max_
     )
     brand_tokens = ai_search_tokens(brand_q) if brand_q else []
 
-    # Remove the resolved brand as a WHOLE PHRASE before matching the fragrance.
-    # This is critical for multi-word houses such as "PARFUMS DE MARLY":
-    # "парфюм де марли альтаир" must become only "альтаир", not
-    # ["de", "marly", "altair"]. The same rule is catalog-wide.
-    name_tokens = _query_name_tokens(query, requested_brand) if requested_brand else tokens
+    # Remove the brand from the name part. This is crucial for queries such as
+    # "Chanel chans": "chanel" scopes the search, while "chans" identifies Chance.
+    name_tokens = [
+        t for t in tokens
+        if not (brand_tokens and any(token_similarity(t, bt) >= 0.82 for bt in brand_tokens))
+    ]
 
     gender_q = gender.lower().strip()
     scored = []
@@ -1638,64 +1654,45 @@ def _fast_base_name(p: dict) -> str:
 
 
 def _query_name_tokens(query: str, resolved_brand: Optional[str]) -> List[str]:
-    """Return only fragrance-name words after removing the resolved brand phrase.
+    """Return meaningful fragrance words after removing the resolved brand.
 
-    Brand removal is phrase-based and catalog-wide.  This prevents multi-word
-    houses such as PARFUMS DE MARLY from leaking words like "de" and "marly"
-    into fragrance matching.  It also supports the reverse word order:
-    "альтаир парфюм де марли" -> "альтаир".
+    Important for Russian brand spellings: a customer may write a house name
+    phonetically (e.g. «парфюм де марли»). Transliteration token-by-token can
+    turn that into several words that do not individually resemble the Latin
+    brand stored in the catalog. Remove a resolved brand alias as a phrase
+    before doing token-level matching.
     """
     q = norm(query)
-    if not resolved_brand:
-        return ai_search_tokens(q)
+    if resolved_brand:
+        # First remove any explicit catalog-wide brand alias as a whole phrase.
+        # This is generic: every alias registered in BRAND_QUERY_ALIASES is
+        # handled, not only PARFUMS DE MARLY.
+        for alias_src, alias_brand in sorted(
+            BRAND_QUERY_ALIASES.items(), key=lambda pair: len(pair[0]), reverse=True
+        ):
+            if norm(alias_brand) == norm(BRAND_DISPLAY.get(resolved_brand, resolved_brand)):
+                q = re.sub(
+                    rf"(?<![a-z0-9а-яё]){re.escape(norm(alias_src))}(?![a-z0-9а-яё])",
+                    " ",
+                    q,
+                )
+        q = re.sub(r"\s+", " ", q).strip()
 
-    brand_label = norm(BRAND_DISPLAY.get(resolved_brand, resolved_brand))
-    target = brand_label
-
-    # Remove every explicit alias that resolves to this exact catalog brand.
-    aliases = []
-    for alias_src, alias_brand in BRAND_QUERY_ALIASES.items():
-        if norm(alias_brand) == target:
-            aliases.append(norm(alias_src))
-
-    # Remove the canonical catalog brand phrase as well.  This is the missing
-    # piece in the previous implementation: normalize_ai_query() can already
-    # turn a Russian alias into "parfums de marly", after which the old code
-    # no longer recognized that canonical phrase as removable.
-    phrases = sorted(set([target] + aliases), key=len, reverse=True)
-
-    for phrase in phrases:
-        if not phrase:
-            continue
-        q = re.sub(
-            rf"(?<![a-z0-9а-яё]){re.escape(phrase)}(?![a-z0-9а-яё])",
-            " ",
-            q,
-            flags=re.I,
-        )
-
-    q = re.sub(r"\s+", " ", q).strip()
     tokens = ai_search_tokens(q)
+    if not resolved_brand:
+        return tokens
 
-    # Safety fallback: if the catalog brand is multi-word and some of its
-    # components survived because of a spelling/transliteration variant, remove
-    # only components that strongly match the resolved brand.  This is applied
-    # after phrase removal, so it cannot reintroduce brand words.
-    bt = ai_search_tokens(brand_label)
+    bt = ai_search_tokens(BRAND_DISPLAY.get(resolved_brand, resolved_brand))
     remaining = []
     used = set()
     for t in tokens:
-        match = next(
-            (i for i, b in enumerate(bt)
-             if i not in used and _brand_match_score(t, b) >= 0.90),
-            None,
-        )
+        match = next((i for i, b in enumerate(bt) if i not in used and _brand_match_score(t, b) >= 0.82), None)
         if match is not None:
             used.add(match)
         else:
             remaining.append(t)
-
     return remaining
+
 
 def _token_variants(token: str) -> List[str]:
     """Generate safe multilingual/phonetic variants for a single search token.
@@ -2504,7 +2501,13 @@ async def edit_or_replace(message, text, reply_markup=None):
     if message.photo:
         await message.delete()
         return await message.answer(text, reply_markup=reply_markup)
-    return await message.edit_text(text, reply_markup=reply_markup)
+    try:
+        return await message.edit_text(text, reply_markup=reply_markup)
+    except Exception as e:
+        # Telegram returns BadRequest when the new content and markup are identical.
+        if "message is not modified" in str(e).lower():
+            return message
+        raise
 
 
 def brand_key_from_query(query: str):
