@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V39-WORDSTAT-PDM-RU"
+PARFERA_AI_VERSION = "V40-UNIVERSAL-BRAND-QUERY-NORMALIZER"
 import asyncio
 import re
 import html
@@ -1248,6 +1248,14 @@ BRAND_QUERY_ALIASES = {
     "амуаш": "AMOUAGE",
     "амуаг": "AMOUAGE",
 }
+
+# Synchronize explicit brand aliases with the main query normalizer.
+# This is catalog-wide: any Russian/phonetic brand alias can be removed from
+# the query as a canonical Latin brand before fragrance-name matching.
+# Specific full-query Wordstat aliases remain authoritative because setdefault
+# never overwrites them.
+for _brand_alias_src, _brand_alias_dst in BRAND_QUERY_ALIASES.items():
+    QUERY_ALIASES.setdefault(norm(_brand_alias_src), norm(_brand_alias_dst))
 
 
 def _latin_brand_to_cyrillic_variants(value: str) -> List[str]:
