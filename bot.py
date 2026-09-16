@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V35-WORDSTAT-XERJOFF-PARTIAL-QUERIES"
+PARFERA_AI_VERSION = "V36-UNIVERSAL-PHONETIC-WORDSTAT"
 import asyncio
 import re
 import html
@@ -1595,12 +1595,36 @@ def _token_variants(token: str) -> List[str]:
 
 
 def _fragrance_phonetic_key(token: str) -> str:
-    """Generic phonetic key for fragrance names, including RU/Latin spellings."""
+    """Generic phonetic key for perfume names.
+
+    Normalizes common Russian/Latin spelling differences without tying the
+    search to any one perfume. In particular:
+      X <-> KS, C/K/Q, G/H, J/ZH, W/V, Y/I.
+    This makes forms such as «наксос» -> NAXOS and
+    «гибискус» -> HIBISCUS work across the whole catalog.
+    """
     keys = []
     for v in _token_variants(token):
         v = v.lower()
+
+        # Normalize multi-letter sounds before removing vowels.
+        v = v.replace("shch", "sh")
+        v = v.replace("ch", "sh")
+        v = v.replace("zh", "h")
+        v = v.replace("ts", "c")
+        v = v.replace("ph", "f")
+
+        # Latin spelling vs Russian phonetic spelling.
+        v = v.replace("x", "ks")
+        v = v.replace("q", "k")
+        v = v.replace("c", "k")
+        v = v.replace("g", "h")
+        v = v.replace("j", "h")
+        v = v.replace("w", "v")
+        v = v.replace("y", "i")
+
+        # Remove vowels after consonant normalization.
         v = re.sub(r"[aeiouy]+", "", v)
-        v = v.replace("zh", "g").replace("shch", "sh").replace("ch", "sh").replace("ts", "c")
         v = re.sub(r"(.)\\1+", r"\\1", v)
         if v:
             keys.append(v)
@@ -1704,7 +1728,7 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
             # winning just because a short word has a misleading fuzzy score.
             # Example: «ксерджофф наксос» must prefer NAXOS, not K'BRIDGE CLUB.
             if resolved_brand and exact == 0:
-                if not all(v >= 0.88 for v in sims):
+                if not all(v >= 0.80 for v in sims):
                     continue
 
             score = avg * 100 + exact * 45
