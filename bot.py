@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V29-POLLING-UNIVERSAL-SEARCH-PHONETIC"
+PARFERA_AI_VERSION = "V30-AMOUAGE-WORDSTAT-BRAND-BOUNDARY"
 import asyncio
 import re
 import html
@@ -767,6 +767,19 @@ def _brand_match_score(query_token: str, brand_token: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+# Explicit brand-name aliases used only to resolve the brand boundary.
+# This prevents a short/phonetic typo such as «амуж» from being compared
+# against perfume names like ASHORE, BEACH HUT, etc.
+BRAND_QUERY_ALIASES = {
+    "amouage": "AMOUAGE",
+    "амуаж": "AMOUAGE",
+    "амоуаж": "AMOUAGE",
+    "амуж": "AMOUAGE",
+    "амуаш": "AMOUAGE",
+    "амуаг": "AMOUAGE",
+}
+
+
 def fuzzy_brand_key(text: str) -> Optional[str]:
     """Catalog-wide brand resolver.
 
@@ -779,6 +792,13 @@ def fuzzy_brand_key(text: str) -> Optional[str]:
     This is intentionally dynamic: it uses the brands detected from the current
     catalog and does not contain one-off rules for Chanel, Dior, Versace, etc.
     """
+    q_raw = norm(text)
+    alias_brand = BRAND_QUERY_ALIASES.get(q_raw)
+    if alias_brand:
+        for key in BRAND_KEYS:
+            if norm(BRAND_DISPLAY.get(key, key)) == norm(alias_brand) or norm(key) == norm(alias_brand):
+                return key
+
     q = normalize_ai_query(text)
     q_latin = q.translate(RU_TO_EN)
     q_tokens = re.findall(r"[a-z0-9]+", q_latin)
@@ -2061,6 +2081,39 @@ async def ai_free_text(message: Message, state: FSMContext):
     if not text or text.startswith("/"):
         return
     print(f"PARFERA AI MESSAGE: {text!r}", flush=True)
+
+    # HARD BRAND-ONLY PATH: if the entire message is a known brand alias,
+    # never run fuzzy perfume-name matching and never let AI broaden it.
+    # Example: «Амуж» / «Амуаж» -> AMOUAGE catalog only.
+    brand_only_key = fuzzy_brand_key(text)
+    if brand_only_key and not _query_name_tokens(text, brand_only_key):
+        brand_products = [
+            p for p in PRODUCTS
+            if variant_is_client_friendly(p) and BRAND_FOR_ID.get(p.get("id")) == brand_only_key
+        ]
+        # Keep one representative per fragrance group, preserving the existing
+        # catalog ordering.
+        seen_groups = set()
+        unique_brand_products = []
+        for prod in brand_products:
+            gk = group_key(prod)
+            if gk in seen_groups:
+                continue
+            seen_groups.add(gk)
+            unique_brand_products.append(prod)
+        unique_brand_products = unique_brand_products[:12]
+        if unique_brand_products:
+            AI_LAST_RESULTS[message.from_user.id] = [p["id"] for p in unique_brand_products]
+            rows = [[InlineKeyboardButton(text=f"🧴 {ai_fragrance_title(p)[:58]}", callback_data=f"product:{p['id']}:ai:0")] for p in unique_brand_products]
+            rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
+            rows.append([InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog")])
+            title = BRAND_DISPLAY.get(brand_only_key, brand_only_key)
+            await message.answer(
+                f"💬 <b>PARFERA AI</b>\n\n<b>{html.escape(title)}</b>\n\nВыберите аромат:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+            )
+            return
+
     # FAST PATH: product-name queries are resolved entirely locally.
     # This avoids the 30–45 sec OpenAI round-trip for obvious names/typos.
     fast_candidates = fast_ai_name_search(text, limit=12)
