@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V32-CATALOG-AI-FINAL-UNIVERSAL-SEARCH"
+PARFERA_AI_VERSION = "V29-POLLING-UNIVERSAL-SEARCH-PHONETIC"
 import asyncio
 import re
 import html
@@ -594,11 +594,9 @@ AI_SYSTEM_PROMPT = """
 - Никогда не придумывай товар, цену, объём или наличие.
 - Клиенту можно показывать ТОЛЬКО те товары, которые вернул search_catalog.
 - Если хочешь предложить известный тебе аромат как кандидата, сначала проверь его через search_catalog.
-- Для описательного запроса («свежий женский на осень», «сладкий подарок») учитывай пол, характер, сезон и ситуацию использования, выбери КОНКРЕТНЫЕ названия-кандидаты и обязательно проверь их через search_catalog.
-- Для запроса «похожее на X» сначала найди X в каталоге, затем сравни альтернативы прежде всего по нотам/обонятельному профилю; объясняй сходство только если клиент попросил.
+- Для описательного запроса («свежий женский на осень», «сладкий подарок», «похожее на Erba Pura») используй свои знания о парфюмерии, чтобы выбрать несколько КОНКРЕТНЫХ названий-кандидатов, затем проверь каждый кандидат через search_catalog.
 - Для запроса с названием аромата сначала ищи именно название, а не весь текст запроса.
-- Если запрос содержит явный бренд, он является ЖЁСТКИМ ФИЛЬТРОМ. Никогда не добавляй другой аромат этого бренда только потому, что он похож по написанию.
-- Можно сделать несколько вызовов search_catalog за один запрос клиента, но итоговая выдача для умного подбора — 3 лучших результата.
+- Можно сделать несколько вызовов search_catalog за один запрос клиента, чтобы проверить 3–6 кандидатов.
 - Если кандидат не найден, не показывай его и попробуй следующий.
 - Если после проверки подходящих товаров нет, честно скажи, что в текущем каталоге подходящего варианта не найдено.
 - Если клиент спрашивает «похожее на X», сначала найди X, затем предложи несколько реально найденных альтернатив. Не утверждай точную идентичность, если нет достаточных данных.
@@ -606,7 +604,7 @@ AI_SYSTEM_PROMPT = """
 - Если клиент не указал важную деталь, не задавай длинную анкету: лучше предложи 3–5 вариантов или задай один короткий вопрос.
 - Отвечай на русском, дружелюбно и премиально, как живой консультант бутика.
 - Не начинай каждый ответ с «В каталоге есть». Говори естественно: «Я бы посмотрел…», «Для вашего запроса хорошо подходят…».
-- Не перегружай ответ. Для умного подбора показывай 3 лучших результата, если они есть.
+- Не перегружай ответ. Обычно достаточно 3–5 рекомендаций.
 - В результатах показывай только парфюмерию: eau de parfum, eau de toilette, parfum, extrait и другие полноценные ароматы. Не показывай body wash, lotion, cream, gel, shampoo, deodorant, свечи, диффузоры, наборы и другую косметику.
 - Если найдено несколько вариантов одного аромата, выбирай наиболее релевантные парфюмерные версии и не засоряй выдачу дублями.
 - Используй HTML-разметку Telegram: <b>жирный</b>, <i>курсив</i>. Не используй Markdown ** или __.
@@ -622,6 +620,75 @@ AI_STOPWORDS = {
     "тяжелый", "тяжелая", "теплый", "теплая", "насыщенный", "насыщенная", "цветочный", "цветочная", "древесный",
     "древесная", "мускусный", "мускусная", "вечерний", "вечерняя", "дневной", "дневная", "офис", "работу",
     "бергамотом", "бергамот", "ванилью", "ваниль", "розой", "роза", "мускусом", "мускус", "уда", "удом"
+}
+
+# Wordstat test index for AMOUAGE (15.08.2026–15.09.2026).
+# These aliases are intentionally scoped to AMOUAGE and only include
+# unambiguous fragrance terms; generic queries such as "амуаж 46" are not
+# force-mapped because they can refer to more than one product.
+WORDSTAT_AMOUAGE_ALIASES = {
+    "амуаж": "amouage",
+    "амоуаж": "amouage",
+    "амуж": "amouage",
+    "амуаж гайденс": "amouage guidance",
+    "гайденс амуаж": "amouage guidance",
+    "амуаж гайданс": "amouage guidance",
+    "гуиданс амуаж": "amouage guidance",
+    "амуаж гуиденс": "amouage guidance",
+    "амуаж гайден": "amouage guidance",
+    "амуаж интерлюд": "amouage interlude",
+    "амуаж рефлекшн": "amouage reflection",
+    "амуаж хонор": "amouage honour",
+    "амуаж саншайн": "amouage sunshine",
+    "амуаж экзистенс": "amouage existence",
+    "амуаж диа": "amouage dia",
+    "амуаж эпик": "amouage epic",
+    "амуаж эпика": "amouage epic",
+    "амуаж гибискус": "amouage love hibiscus",
+    "амуаж лав гибискус": "amouage love hibiscus",
+    "амуаж лав": "amouage love",
+    "амуаж лове": "amouage love",
+    "амуаж блоссом": "amouage blossom love",
+    "амуаж блоссом лав": "amouage blossom love",
+    "амуаж тубероза": "amouage love tuberose",
+    "амуаж пурпосе": "amouage purpose",
+    "амуаж делайт": "amouage love delight",
+    "амуаж аутлендс": "amouage outlands",
+    "амуаж интерлюд мен": "amouage interlude man",
+    "амуаж опус 14": "amouage opus 14 royal tobacco",
+    "амуаж розовый": "amouage rose incense",
+    "амуаж белый": "amouage reflection",
+    "amouage guidance": "amouage guidance",
+    "guidance amouage": "amouage guidance",
+    "amouage interlude": "amouage interlude",
+    "amouage reflection": "amouage reflection",
+    "amouage honour": "amouage honour",
+    "amouage sunshine": "amouage sunshine",
+    "amouage existence": "amouage existence",
+    "amouage dia": "amouage dia",
+    "amouage epic": "amouage epic",
+    "amouage hibiscus": "amouage love hibiscus",
+    "love hibiscus amouage": "amouage love hibiscus",
+    "amouage blossom love": "amouage blossom love",
+    "amouage blossom": "amouage blossom love",
+    "amouage delight": "amouage love delight",
+    "love delight amouage": "amouage love delight",
+    "amouage tuberose": "amouage love tuberose",
+    "love tuberose amouage": "amouage love tuberose",
+    "amouage purpose": "amouage purpose",
+    "amouage outlands": "amouage outlands",
+    "amouage imitation": "amouage imitation",
+    "amouage memoir": "amouage memoir",
+    "amouage jubilation": "amouage jubilation",
+    "amouage journey": "amouage journey",
+    "amouage sequence": "amouage sequence",
+    "amouage lineage": "amouage lineage",
+    "amouage overture": "amouage overture",
+    "amouage lyric": "amouage lyric",
+    "amouage crimson": "amouage crimson rocks",
+    "amouage rocks": "amouage crimson rocks",
+    "royal tobacco amouage": "amouage opus 14 royal tobacco",
+    "amouage tobacco": "amouage opus 14 royal tobacco",
 }
 
 QUERY_ALIASES = {
@@ -652,6 +719,9 @@ QUERY_ALIASES = {
     "эpoс": "eros",
     "эрос": "eros",
 }
+
+# Wordstat aliases take precedence over generic fuzzy matching.
+QUERY_ALIASES.update(WORDSTAT_AMOUAGE_ALIASES)
 
 RU_TO_EN = str.maketrans({
     "а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"e","ж":"zh","з":"z","и":"i","й":"y",
@@ -795,28 +865,19 @@ DESCRIPTIVE_AI_WORDS = {
 }
 
 def is_name_like_query(text: str) -> bool:
-    """Conservative gate for concrete catalogue lookups."""
     tokens = ai_search_tokens(text)
     if not tokens or len(tokens) > 7:
         return False
-
-    meaningful = [t for t in tokens if not t.isdigit() and len(t) >= 2]
-    if not meaningful:
-        return False
-
     brand = fuzzy_brand_key(text)
     if brand:
+        # With a recognized brand, the remaining words must look like a name,
+        # otherwise leave it to the semantic AI flow.
         brand_tokens = set(ai_search_tokens(BRAND_DISPLAY.get(brand, brand)))
-        rest = [t for t in meaningful
-                if all(token_similarity(t, b) < 0.76 for b in brand_tokens)]
+        rest = [t for t in tokens if all(token_similarity(t, b) < 0.76 for b in brand_tokens)]
         if not rest:
             return True
         return any(t not in DESCRIPTIVE_AI_WORDS and len(t) >= 3 for t in rest)
-
-    return any(
-        t not in DESCRIPTIVE_AI_WORDS and not t.isdigit() and len(t) >= 4
-        for t in meaningful
-    )
+    return any(t not in DESCRIPTIVE_AI_WORDS and len(t) >= 4 for t in tokens)
 
 
 def _infer_explicit_brand_from_query(query: str) -> Optional[str]:
@@ -957,20 +1018,14 @@ def ai_tool_result(candidates: List[dict]) -> dict:
             prices.append(f"флакон {p.get('volume','')} — {rub(p['bottle_price_rub'])}")
         if p.get("tester_price_rub"):
             prices.append(f"тестер {p.get('volume','')} — {rub(p['tester_price_rub'])}")
-        item = {
+        out.append({
             "id": p["id"],
             "brand": BRAND_DISPLAY.get(BRAND_FOR_ID.get(p["id"], ""), ""),
             "name": fragrance_title(p),
             "supplier_name": p.get("name", ""),
             "prices": prices,
             "gender": "мужской" if re.search(r"\(m\)", p.get("name", ""), re.I) else "женский" if re.search(r"\(w\)", p.get("name", ""), re.I) else "унисекс"
-        }
-        # Use catalogue metadata when present; never invent missing fields.
-        for key in ("description", "notes", "top_notes", "heart_notes", "base_notes",
-                    "season", "occasion", "character", "image", "photo", "in_stock"):
-            if p.get(key) not in (None, "", [], {}):
-                item[key] = p.get(key)
-        out.append(item)
+        })
     return {"count": len(out), "items": out}
 
 
@@ -1164,29 +1219,10 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
     if brand_only:
         return [p for _, p in scored[:max(1, min(limit, 12))]]
 
-    # For named queries, never fill the list with merely related products.
-    threshold = best - (12 if resolved_brand else 10)
-    close = [p for score, p in scored if score >= threshold]
-
-    # A concrete one-word name such as "Chance" must not expand into
-    # partial names such as "Chancery" when an exact/near-exact match exists.
-    if len(name_tokens) == 1:
-        token = name_tokens[0]
-        exactish = []
-        for p in close:
-            base_tokens = re.findall(
-                r"[a-z0-9]+", _fast_base_name(p).translate(RU_TO_EN)
-            )
-            s = max(
-                (_fragrance_token_score(token, rt) for rt in base_tokens),
-                default=0.0
-            )
-            if s >= 0.90:
-                exactish.append(p)
-        if exactish:
-            close = exactish
-
-    return close[:max(1, min(limit, 12))]
+    # For named queries, do not fill the list with merely related products.
+    # A typo match must be close to the best match.
+    threshold = best - (16 if resolved_brand else 12)
+    return [p for score, p in scored if score >= threshold][:max(1, min(limit, 12))]
 
 
 def fast_ai_response(query: str, candidates: List[dict]) -> str:
@@ -2095,7 +2131,7 @@ async def ai_free_text(message: Message, state: FSMContext):
         except asyncio.CancelledError:
             pass
     rows = []
-    for p in candidates[:3]:
+    for p in candidates[:5]:
         title = ai_fragrance_title(p)
         rows.append([InlineKeyboardButton(text=f"🧴 {title[:58]}", callback_data=f"product:{p['id']}:ai:0")])
     rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
