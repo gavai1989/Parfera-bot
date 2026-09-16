@@ -2086,7 +2086,10 @@ async def ai_free_text(message: Message, state: FSMContext):
     # never run fuzzy perfume-name matching and never let AI broaden it.
     # Example: «Амуж» / «Амуаж» -> AMOUAGE catalog only.
     brand_only_key = fuzzy_brand_key(text)
-    if brand_only_key and not _query_name_tokens(text, brand_only_key):
+    brand_only_alias = norm(text) in BRAND_QUERY_ALIASES
+    if brand_only_key and (brand_only_alias or not _query_name_tokens(text, brand_only_key)):
+        if brand_only_alias:
+            print(f"BRAND ALIAS RESOLVED: {text!r} -> {brand_only_key!r}", flush=True)
         brand_products = [
             p for p in PRODUCTS
             if variant_is_client_friendly(p) and BRAND_FOR_ID.get(p.get("id")) == brand_only_key
