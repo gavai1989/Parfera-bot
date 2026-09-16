@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V34-WORDSTAT-XERJOFF-STRICT-NAME"
+PARFERA_AI_VERSION = "V35-WORDSTAT-XERJOFF-PARTIAL-QUERIES"
 import asyncio
 import re
 import html
@@ -691,7 +691,14 @@ WORDSTAT_AMOUAGE_ALIASES = {
     "amouage tobacco": "amouage opus 14 royal tobacco",
 }
 
+# Wordstat-derived Russian XERJOFF brand spellings.
+# Works for longer queries too: «ксерджофф эрба» -> XERJOFF + ERBA.
 QUERY_ALIASES = {
+    "ксерджофф": "xerjoff",
+    "ксерджоф": "xerjoff",
+    "ксерджов": "xerjoff",
+    "ксерйофф": "xerjoff",
+    "ксерйоф": "xerjoff",
     "флер наркотик": "fleur narcotique",
     "флер наркотик ex nihilo": "ex nihilo fleur narcotique",
     "флер наркoтик": "fleur narcotique",
@@ -1234,11 +1241,20 @@ def fuzzy_brand_key(text: str) -> Optional[str]:
     catalog and does not contain one-off rules for Chanel, Dior, Versace, etc.
     """
     q_raw = norm(text)
-    alias_brand = BRAND_QUERY_ALIASES.get(q_raw)
-    if alias_brand:
-        for key in BRAND_KEYS:
-            if norm(BRAND_DISPLAY.get(key, key)) == norm(alias_brand) or norm(key) == norm(alias_brand):
-                return key
+
+    # Resolve known brand spellings inside longer queries.
+    embedded_aliases = sorted(
+        list(BRAND_QUERY_ALIASES.items()) +
+        [("ксерджофф", "XERJOFF"), ("ксерджоф", "XERJOFF"),
+         ("ксерджов", "XERJOFF"), ("ксерйофф", "XERJOFF"),
+         ("ксерйоф", "XERJOFF")],
+        key=lambda pair: len(pair[0]), reverse=True,
+    )
+    for alias_src, alias_brand in embedded_aliases:
+        if re.search(rf"(?<![a-z0-9а-яё]){re.escape(alias_src)}(?![a-z0-9а-яё])", q_raw):
+            for key in BRAND_KEYS:
+                if norm(BRAND_DISPLAY.get(key, key)) == norm(alias_brand) or norm(key) == norm(alias_brand):
+                    return key
 
     # Universal Russian/phonetic brand resolution. This runs before fragrance
     # matching, so a typo such as «амуж» can never become ASHORE or another
