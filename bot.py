@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V30-AMOUAGE-WORDSTAT-BRAND-BOUNDARY"
+PARFERA_AI_VERSION = "V31-UNIVERSAL-BRAND-RESOLVER"
 import asyncio
 import re
 import html
@@ -767,9 +767,9 @@ def _brand_match_score(query_token: str, brand_token: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
-# Explicit brand-name aliases used only to resolve the brand boundary.
-# This prevents a short/phonetic typo such as «амуж» from being compared
-# against perfume names like ASHORE, BEACH HUT, etc.
+# Catalog-wide brand aliases.
+# Exact aliases remain useful for irregular names, while the phonetic layer
+# below generates Russian forms for every brand present in the catalog.
 BRAND_QUERY_ALIASES = {
     "amouage": "AMOUAGE",
     "амуаж": "AMOUAGE",
@@ -778,6 +778,72 @@ BRAND_QUERY_ALIASES = {
     "амуаш": "AMOUAGE",
     "амуаг": "AMOUAGE",
 }
+
+
+def _latin_brand_to_cyrillic_variants(value: str) -> List[str]:
+    """Generate a small set of Russian phonetic spellings for a Latin brand."""
+    s = re.sub(r"[^a-z0-9 ]+", " ", norm(value))
+    s = re.sub(r"\s+", " ", s).strip()
+    if not s:
+        return []
+
+    digraphs = [
+        ("shch", "щ"), ("sch", "щ"), ("zh", "ж"), ("ch", "ч"),
+        ("sh", "ш"), ("kh", "х"), ("ts", "ц"), ("yu", "ю"),
+        ("ya", "я"), ("yo", "ё"), ("ph", "ф"),
+    ]
+    singles = {
+        "a":"а","b":"б","c":"к","d":"д","e":"е","f":"ф","g":"г",
+        "h":"х","i":"и","j":"й","k":"к","l":"л","m":"м","n":"н",
+        "o":"о","p":"п","q":"к","r":"р","s":"с","t":"т","u":"у",
+        "v":"в","w":"в","x":"кс","y":"й","z":"з"
+    }
+
+    def translit(word: str) -> str:
+        out, i = [], 0
+        while i < len(word):
+            matched = False
+            for src, dst in digraphs:
+                if word.startswith(src, i):
+                    out.append(dst)
+                    i += len(src)
+                    matched = True
+                    break
+            if not matched:
+                out.append(singles.get(word[i], word[i]))
+                i += 1
+        return "".join(out)
+
+    base = " ".join(translit(w) for w in s.split())
+    variants = {base}
+
+    # Common Russian spelling variants for a few Latin letters.
+    variants.add(base.replace("кс", "х"))
+    variants.add(base.replace("й", "и"))
+    variants.add(base.replace("в", "у"))
+    variants.add(base.replace("е", "э"))
+    return [v for v in variants if v]
+
+
+def _brand_alias_similarity(query_token: str, brand_key: str) -> float:
+    """Compare a user token against both Latin and generated Russian brand forms."""
+    q = norm(query_token)
+    if not q:
+        return 0.0
+
+    label = norm(BRAND_DISPLAY.get(brand_key, brand_key))
+    candidates = [label]
+    candidates += _latin_brand_to_cyrillic_variants(label)
+
+    best = 0.0
+    for cand in candidates:
+        for part in re.findall(r"[a-z0-9а-яё]+", cand.lower()):
+            # Compare in the user's script first; also compare transliterated forms.
+            best = max(best, _brand_match_score(q, part))
+            q_lat = q.translate(RU_TO_EN)
+            part_lat = part.translate(RU_TO_EN)
+            best = max(best, _brand_match_score(q_lat, part_lat))
+    return best
 
 
 def fuzzy_brand_key(text: str) -> Optional[str]:
@@ -798,6 +864,26 @@ def fuzzy_brand_key(text: str) -> Optional[str]:
         for key in BRAND_KEYS:
             if norm(BRAND_DISPLAY.get(key, key)) == norm(alias_brand) or norm(key) == norm(alias_brand):
                 return key
+
+    # Universal Russian/phonetic brand resolution. This runs before fragrance
+    # matching, so a typo such as «амуж» can never become ASHORE or another
+    # similarly spelled perfume name.
+    raw_tokens = re.findall(r"[a-zа-яё0-9]+", q_raw)
+    for qt in raw_tokens:
+        if len(qt) < 4:
+            continue
+        candidates = []
+        for key in BRAND_KEYS:
+            sim = _brand_alias_similarity(qt, key)
+            if sim >= 0.80:
+                candidates.append((sim, key))
+        if candidates:
+            candidates.sort(reverse=True)
+            top_score, top_key = candidates[0]
+            second_score = candidates[1][0] if len(candidates) > 1 else 0.0
+            # Require a clear winner for fuzzy brand spelling.
+            if top_score >= 0.86 or (top_score >= 0.80 and top_score - second_score >= 0.08):
+                return top_key
 
     q = normalize_ai_query(text)
     q_latin = q.translate(RU_TO_EN)
