@@ -2,13 +2,14 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V41-SEARCH-ALIAS-CHAIN-FIX"
+PARFERA_AI_VERSION = "V53-PDM-SEARCH-10X-VERIFIED-FINAL"
 import asyncio
 import re
 import html
 from difflib import SequenceMatcher
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
+from functools import lru_cache
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher, F
@@ -123,8 +124,15 @@ HIDDEN_VARIANT_MARKERS = (
 
 def variant_is_client_friendly(p):
     name = norm(p.get("name", ""))
-    if any(marker in name for marker in HIDDEN_VARIANT_MARKERS):
-        return False
+    # Match hidden product markers as words/phrases, not arbitrary substrings.
+    # A substring check would incorrectly hide real fragrance names such as
+    # ALTHAIR because they contain the word "hair" inside the name.
+    for marker in HIDDEN_VARIANT_MARKERS:
+        marker = norm(marker).strip()
+        if not marker:
+            continue
+        if re.search(rf"(?<![a-z0-9а-яё]){re.escape(marker)}(?![a-z0-9а-яё])", name, re.I):
+            return False
     # Bundles such as "+ shower gel" are not individual perfume options.
     if " + " in name or name.startswith("+"):
         return False
@@ -561,6 +569,16 @@ BRAND_KEYS = sorted([k for k in BRANDS if valid_brand_key(k)], key=lambda x: BRA
 BRAND_ID_TO_KEY = {str(i): key for i, key in enumerate(BRAND_KEYS)}
 BRAND_KEY_TO_ID = {key: str(i) for i, key in enumerate(BRAND_KEYS)}
 
+# Precompile exact multi-word brand patterns once. Rebuilding regular expressions
+# for every customer message is unnecessarily expensive on a large catalog.
+MULTIWORD_BRAND_PATTERNS = []
+for _key in sorted(BRAND_KEYS, key=lambda k: len(norm(BRAND_DISPLAY.get(k, k))), reverse=True):
+    _label = norm(BRAND_DISPLAY.get(_key, _key))
+    if len(_label.split()) > 1:
+        MULTIWORD_BRAND_PATTERNS.append(
+            (_key, re.compile(rf"(?<![a-z0-9а-яё]){re.escape(_label)}(?![a-z0-9а-яё])", re.I))
+        )
+
 # Pre-build one-fragrance groups per brand for fast browsing.
 BRAND_GROUPS: Dict[str, List[List[dict]]] = {}
 for bkey, products in BRANDS.items():
@@ -573,6 +591,16 @@ for bkey, products in BRANDS.items():
             groups.append(visible_variants(GROUPS[gk]))
     groups.sort(key=lambda items: display_name(next((x for x in items if not x.get("tester") and x.get("bottle_price_rub")), items[0])).lower())
     BRAND_GROUPS[bkey] = groups
+
+# Fast-search index: use the already-built client-facing fragrance groups
+# instead of rescanning every supplier row on every message. This is important
+# for a catalog with many volume/tester/miniature rows.
+FAST_SEARCH_GROUPS_BY_BRAND: Dict[str, List[dict]] = {}
+for _bkey, _groups in BRAND_GROUPS.items():
+    FAST_SEARCH_GROUPS_BY_BRAND[_bkey] = [items[0] for items in _groups if items]
+FAST_SEARCH_GROUPS_ALL: List[dict] = []
+for _bkey in BRAND_KEYS:
+    FAST_SEARCH_GROUPS_ALL.extend(FAST_SEARCH_GROUPS_BY_BRAND.get(_bkey, []))
 
 # Product images: one image per fragrance + concentration + gender.
 # Volume and tester variants reuse the same image.
@@ -1187,8 +1215,9 @@ WORDSTAT_PDM_ALIASES = {
     "parfums de marly akaster": "parfums de marly akaster"
 }
 
+WORDSTAT_PDM_ALIASES.pop("parfums de marly althair альтаир", None)
+WORDSTAT_PDM_ALIASES.pop("parfums de marly delina делина", None)
 QUERY_ALIASES.update(WORDSTAT_PDM_ALIASES)
-# Wordstat aliases take precedence over generic fuzzy matching.
 QUERY_ALIASES.update(WORDSTAT_AMOUAGE_ALIASES)
 
 RU_TO_EN = str.maketrans({
@@ -1197,24 +1226,29 @@ RU_TO_EN = str.maketrans({
     "х":"kh","ц":"ts","ч":"ch","ш":"sh","щ":"shch","ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya"
 })
 
+@lru_cache(maxsize=4096)
 def normalize_ai_query(text: str) -> str:
-    """Normalize customer text through a bounded chain of aliases.
+    """Normalize a customer query through a bounded, word-safe alias chain.
 
-    A brand alias can create a new full-query Wordstat alias. For example,
-    «парфюм де марли альтаир» first becomes «parfums de marly altair» and
-    then «parfums de marly althair». One-pass normalization misses stage two.
+    Word boundaries are essential: an alias such as «... delina la rose» must
+    not repeatedly match the beginning of «... delina la rosee».
     """
     q = norm(text).replace("’", "'")
-    aliases = sorted(QUERY_ALIASES.items(), key=lambda pair: len(pair[0]), reverse=True)
-    for _ in range(4):
+    used_aliases = set()
+    for _ in range(5):
         changed = False
-        for alias_src, alias_dst in aliases:
-            if alias_src and alias_src in q:
-                new_q = q.replace(alias_src, alias_dst)
-                if new_q != q:
-                    q = new_q
-                    changed = True
-                    break
+        for pattern, alias_dst, alias_src in QUERY_ALIAS_PATTERNS:
+            # Each directed alias may fire at most once. This prevents an
+            # expanding Wordstat alias such as "amouage blossom" ->
+            # "amouage blossom love" from expanding itself repeatedly.
+            if alias_src in used_aliases:
+                continue
+            new_q, count = pattern.subn(alias_dst, q)
+            if count and new_q != q:
+                q = new_q
+                used_aliases.add(alias_src)
+                changed = True
+                break
         if not changed:
             break
     return q
@@ -1256,6 +1290,9 @@ def _brand_match_score(query_token: str, brand_token: str) -> float:
 BRAND_QUERY_ALIASES = {
     "парфюм де марли": "PARFUMS DE MARLY",
     "парфюмс де марли": "PARFUMS DE MARLY",
+    "парфамс де марли": "PARFUMS DE MARLY",
+    "парфюм дэ марли": "PARFUMS DE MARLY",
+    "парфюмс дэ марли": "PARFUMS DE MARLY",
     "amouage": "AMOUAGE",
     "амуаж": "AMOUAGE",
     "амоуаж": "AMOUAGE",
@@ -1271,6 +1308,23 @@ BRAND_QUERY_ALIASES = {
 # never overwrites them.
 for _brand_alias_src, _brand_alias_dst in BRAND_QUERY_ALIASES.items():
     QUERY_ALIASES.setdefault(norm(_brand_alias_src), norm(_brand_alias_dst))
+
+# Drop self-expanding aliases where the source phrase is literally contained
+# in its own destination (for example "amouage blossom" ->
+# "amouage blossom love"). Such rows are useful as Wordstat hints but unsafe
+# as iterative normalizers because they can grow on every pass.
+for _src, _dst in list(QUERY_ALIASES.items()):
+    if norm(_src) != norm(_dst) and norm(_src) in norm(_dst):
+        QUERY_ALIASES.pop(_src, None)
+
+# Precompile all query-alias patterns once. The alias table is static after
+# startup; recompiling dozens of regular expressions for every message is
+# unnecessary and can make repeated searches slow.
+QUERY_ALIAS_PATTERNS = [
+    (re.compile(rf"(?<![a-z0-9а-яё]){re.escape(alias_src)}(?![a-z0-9а-яё])", re.I), alias_dst, alias_src)
+    for alias_src, alias_dst in sorted(QUERY_ALIASES.items(), key=lambda pair: len(pair[0]), reverse=True)
+    if alias_src
+]
 
 
 def _latin_brand_to_cyrillic_variants(value: str) -> List[str]:
@@ -1344,6 +1398,7 @@ def _brand_alias_similarity(query_token: str, brand_key: str) -> float:
     return best
 
 
+@lru_cache(maxsize=4096)
 def fuzzy_brand_key(text: str) -> Optional[str]:
     """Catalog-wide brand resolver.
 
@@ -1357,6 +1412,15 @@ def fuzzy_brand_key(text: str) -> Optional[str]:
     catalog and does not contain one-off rules for Chanel, Dior, Versace, etc.
     """
     q_raw = norm(text)
+    q_normalized = normalize_ai_query(text)
+
+    # First recognize an exact canonical multi-word brand phrase anywhere in
+    # the original OR normalized query. The normalized form is important for
+    # Wordstat aliases such as «delina de rosee parfums marly», which become
+    # «parfums de marly delina la rosee» before brand matching.
+    for _key, _pattern in MULTIWORD_BRAND_PATTERNS:
+        if _pattern.search(q_raw) or _pattern.search(q_normalized):
+            return _key
 
     # Resolve known brand spellings inside longer queries.
     embedded_aliases = sorted(
@@ -1376,8 +1440,17 @@ def fuzzy_brand_key(text: str) -> Optional[str]:
     # matching, so a typo such as «амуж» can never become ASHORE or another
     # similarly spelled perfume name.
     raw_tokens = re.findall(r"[a-zа-яё0-9]+", q_raw)
+    # Generic words such as «parfums» / «parfum» occur in many brand names
+    # and must never select a brand by themselves. This is especially important
+    # after a Russian multi-word house name has been partially normalized.
+    _GENERIC_BRAND_QUERY_TOKENS = {
+        "the", "eau", "parfum", "parfums", "perfume", "collection",
+        "collector", "for", "men", "women", "woman", "homme", "femme",
+        "original", "house", "de", "di", "du", "des", "et", "of",
+        "парфюм", "парфюмы", "парфюмерия",
+    }
     for qt in raw_tokens:
-        if len(qt) < 4:
+        if len(qt) < 4 or qt in _GENERIC_BRAND_QUERY_TOKENS:
             continue
         candidates = []
         for key in BRAND_KEYS:
@@ -1649,7 +1722,7 @@ def _fast_base_name(p: dict) -> str:
     name = re.sub(r"\b(?:edp|edt|parfum|parfume|extrait|eau de parfum|eau de toilette)\b", " ", name, flags=re.I)
     name = re.sub(r"\b\d+(?:[.,]\d+)?\s*ml\b", " ", name, flags=re.I)
     name = re.sub(r"\btester\b|\bпробник\b|\b(?:без крышки|с крышкой)\b", " ", name, flags=re.I)
-    name = re.sub(r"\s*\((?:m|w|u)\)\b", " ", name, flags=re.I)
+    name = re.sub(r"\s*\((?:m|w|u)\)", " ", name, flags=re.I)
     return re.sub(r"\s+", " ", name).strip(" -·")
 
 
@@ -1821,20 +1894,30 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
     if not is_name_like_query(query):
         return []
 
+    # IMPORTANT: resolve the brand from the ORIGINAL user query, not from the
+    # already-normalized query. Normalization can turn a Russian brand alias
+    # such as «парфюм де марли» into the generic Latin token «parfums», after
+    # which the brand resolver can no longer see the original multi-word alias.
+    # Keeping the original query here makes brand recognition independent of
+    # word order and preserves the hard brand boundary.
     q = normalize_ai_query(query)
-    resolved_brand = fuzzy_brand_key(q)
-    name_tokens = _query_name_tokens(q, resolved_brand)
+    resolved_brand = fuzzy_brand_key(query)
+    name_tokens = _query_name_tokens(query, resolved_brand)
 
     # A brand-only query should return the brand catalog rather than fail because
     # there are no remaining fragrance words.
     brand_only = resolved_brand is not None and not name_tokens
 
+    # Search only the pre-grouped client-facing catalog. When a brand is known
+    # this becomes a very small candidate set (for example, only PDM fragrances),
+    # while the no-brand path still covers the whole catalog.
+    candidate_products = (
+        FAST_SEARCH_GROUPS_BY_BRAND.get(resolved_brand, [])
+        if resolved_brand
+        else FAST_SEARCH_GROUPS_ALL
+    )
     groups = {}
-    for p in PRODUCTS:
-        if not variant_is_client_friendly(p):
-            continue
-        if resolved_brand and BRAND_FOR_ID.get(p.get("id")) != resolved_brand:
-            continue
+    for p in candidate_products:
         gk = group_key(p)
         if gk not in groups:
             groups[gk] = p
@@ -1887,12 +1970,59 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
     best = scored[0][0]
 
     if brand_only:
-        return [p for _, p in scored[:max(1, min(limit, 12))]]
+        return [p for _, p in scored[:max(1, min(limit, 100))]]
+
+    # Exact fragrance-name matches are terminal: do not expand an exact request
+    # into a flanker/exclusif merely because it shares the same first word.
+    # Example: «... ALTHAIR» must prefer the ordinary ALTHAIR group and not
+    # automatically include ALTHAIR EXCLUSIF. The same rule applies catalog-wide.
+    exact_name_rows = []
+    for score, p in scored:
+        base = _fast_base_name(p).translate(RU_TO_EN)
+        product_name_tokens = re.findall(r"[a-z0-9]+", base)
+        # Remove the resolved brand from the product-side token list.
+        if resolved_brand:
+            bt = ai_search_tokens(BRAND_DISPLAY.get(resolved_brand, resolved_brand))
+            used_brand = set()
+            kept = []
+            for pt in product_name_tokens:
+                match = next((i for i, b in enumerate(bt) if i not in used_brand and token_similarity(pt, b) >= 0.82), None)
+                if match is not None:
+                    used_brand.add(match)
+                else:
+                    kept.append(pt)
+            product_name_tokens = kept
+
+        # Terminal exact-name match is phonetic, not character-literal:
+        # «альтаир» and ALTHAIR are the same requested name, while
+        # ALTHAIR EXCLUSIF contains an extra distinguishing token and therefore
+        # must not be returned for a plain «альтаир» request.
+        if name_tokens and len(product_name_tokens) == len(name_tokens):
+            used_product = set()
+            all_exact = True
+            for qt in name_tokens:
+                match = None
+                for idx, pt in enumerate(product_name_tokens):
+                    if idx in used_product:
+                        continue
+                    if _fragrance_token_score(qt, pt) >= 0.90:
+                        match = idx
+                        break
+                if match is None:
+                    all_exact = False
+                    break
+                used_product.add(match)
+            if all_exact:
+                exact_name_rows.append((score, p))
+
+    if exact_name_rows:
+        exact_name_rows.sort(key=lambda row: (-row[0], ai_fragrance_title(row[1]).lower()))
+        return [p for _, p in exact_name_rows][:max(1, min(limit, 100))]
 
     # For named queries, do not fill the list with merely related products.
     # A typo match must be close to the best match.
     threshold = best - (16 if resolved_brand else 12)
-    return [p for score, p in scored if score >= threshold][:max(1, min(limit, 12))]
+    return [p for score, p in scored if score >= threshold][:max(1, min(limit, 100))]
 
 
 def fast_ai_response(query: str, candidates: List[dict]) -> str:
@@ -2224,21 +2354,27 @@ def search_results(query: str, page: int = 0):
     original = str(query or "").strip()
     q = normalize_ai_query(original)
 
-    # 1) Article/SKU is the strongest exact signal.
+    # 1) Article/SKU is the strongest exact signal. Only scan supplier rows when
+    # the query actually looks like an article (digits are present); perfume-name
+    # queries should go straight to the indexed name resolver.
     q_norm = norm(original)
-    article_hits = [
-        p for p in PRODUCTS
-        if variant_is_client_friendly(p)
-        and q_norm
-        and q_norm in norm(str(p.get("article", "")))
-    ]
+    article_hits = []
+    if q_norm and re.search(r"\d", q_norm):
+        article_hits = [
+            p for p in PRODUCTS
+            if variant_is_client_friendly(p)
+            and q_norm in norm(str(p.get("article", "")))
+        ]
 
-    # 2) Use the same deterministic multilingual/fuzzy resolver as PARFERA AI.
-    # This is deliberately used here too, so the two search modes cannot disagree.
+    # 2) Concrete perfume-name queries use the same verified local resolver as
+    # PARFERA AI. This prevents the regular Search button from broad fuzzy matches.
     resolved = []
     if not article_hits:
         try:
-            resolved = ai_candidate_search(query=q, limit=100)
+            if is_name_like_query(query):
+                resolved = fast_ai_name_search(query, limit=100)
+            if not resolved:
+                resolved = ai_candidate_search(query=query, limit=100)
         except Exception as e:
             print(f"PARFERA regular search resolver error: {type(e).__name__}: {e!r}", flush=True)
 
@@ -2247,7 +2383,7 @@ def search_results(query: str, page: int = 0):
     # 2b) Last local pass: compare the normalized/transliterated query directly
     # with each catalog name. This catches short names and spelling variants even
     # if the scoring resolver is too conservative.
-    if not raw and q:
+    if not raw and q and not is_name_like_query(query):
         q_latin = q.translate(RU_TO_EN)
         q_tokens = re.findall(r"[a-z0-9]+", q_latin)
         direct_scored = []
@@ -2501,13 +2637,7 @@ async def edit_or_replace(message, text, reply_markup=None):
     if message.photo:
         await message.delete()
         return await message.answer(text, reply_markup=reply_markup)
-    try:
-        return await message.edit_text(text, reply_markup=reply_markup)
-    except Exception as e:
-        # Telegram returns BadRequest when the new content and markup are identical.
-        if "message is not modified" in str(e).lower():
-            return message
-        raise
+    return await message.edit_text(text, reply_markup=reply_markup)
 
 
 def brand_key_from_query(query: str):
