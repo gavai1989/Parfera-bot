@@ -2,7 +2,7 @@ import os
 import json
 import traceback
 
-PARFERA_AI_VERSION = "V53-PDM-SEARCH-10X-VERIFIED-FINAL"
+PARFERA_AI_VERSION = "V54-BOUNDED-INDEXED-SEARCH"
 import asyncio
 import re
 import html
@@ -119,7 +119,7 @@ HIDDEN_VARIANT_MARKERS = (
     "cosm", "cosmetic", "shampoo", "conditioner", "hand wash", "hand cream",
     "soap", "hair", "bath", "shower", "lotion", "cream", "balm", "gel",
     "candle", "diffuser", "home fragrance", "mini", "male minis", "female minis",
-    "set ", "gift set", "набор", "парфюм для волос", "парфюм для тела", "для волос", "для тела",
+    "set ", "gift set", "набор",
 )
 
 def variant_is_client_friendly(p):
@@ -640,6 +640,7 @@ AI_SYSTEM_PROMPT = """
 """
 
 AI_STOPWORDS = {
+    "парфюм", "парфюмы", "парфюмерия", "духи", "дух", "perfume", "perfumes", "parfum", "parfums", "fragrance", "parfyum", "dukhi", "aromat", "flakon", "флакон", "флакона", "туалетная", "вода", "edt", "edp", "extrait", "parfume",
     "и", "или", "на", "для", "мне", "мужской", "мужская", "мужское", "женский", "женская", "женское",
     "унисекс", "аромат", "аромата", "ароматы", "хочу", "нужен", "нужна", "нужно", "подбери", "подобрать",
     "посоветуй", "порекомендуй", "ищу", "найди", "есть", "что", "чтобы", "до", "руб", "рублей", "рубля",
@@ -1398,6 +1399,36 @@ def _brand_alias_similarity(query_token: str, brand_key: str) -> float:
     return best
 
 
+
+# Bounded brand index. Brand resolution must not compare every query token with
+# every catalog brand. Exact component and one-edit deletion keys are enough for
+# normal spelling/typo cases; irregular Russian spellings are covered by the
+# catalog-wide aliases above.
+_BRAND_COMPONENT_INDEX: Optional[Dict[str, set]] = None
+_BRAND_COMPONENT_DELETE_INDEX: Optional[Dict[str, set]] = None
+
+def _build_brand_component_indexes():
+    global _BRAND_COMPONENT_INDEX, _BRAND_COMPONENT_DELETE_INDEX
+    if _BRAND_COMPONENT_INDEX is not None:
+        return
+    generic = {
+        "the", "eau", "ea", "parfum", "parfums", "perfume", "collection",
+        "collector", "for", "men", "women", "woman", "homme", "femme",
+        "original", "house", "de", "di", "du", "des", "et", "of",
+    }
+    idx: Dict[str, set] = {}
+    didx: Dict[str, set] = {}
+    for key in BRAND_KEYS:
+        label = norm(BRAND_DISPLAY.get(key, key)).translate(RU_TO_EN)
+        for token in re.findall(r"[a-z0-9]+", label):
+            if token in generic or len(token) < 4:
+                continue
+            idx.setdefault(token, set()).add(key)
+            for i in range(len(token)):
+                didx.setdefault(token[:i] + token[i + 1:], set()).add(key)
+    _BRAND_COMPONENT_INDEX = idx
+    _BRAND_COMPONENT_DELETE_INDEX = didx
+
 @lru_cache(maxsize=4096)
 def fuzzy_brand_key(text: str) -> Optional[str]:
     """Catalog-wide brand resolver.
@@ -1449,19 +1480,30 @@ def fuzzy_brand_key(text: str) -> Optional[str]:
         "original", "house", "de", "di", "du", "des", "et", "of",
         "парфюм", "парфюмы", "парфюмерия",
     }
+    _build_brand_component_indexes()
+    assert _BRAND_COMPONENT_INDEX is not None
+    assert _BRAND_COMPONENT_DELETE_INDEX is not None
+
     for qt in raw_tokens:
         if len(qt) < 4 or qt in _GENERIC_BRAND_QUERY_TOKENS:
             continue
-        candidates = []
-        for key in BRAND_KEYS:
-            sim = _brand_alias_similarity(qt, key)
-            if sim >= 0.80:
-                candidates.append((sim, key))
-        if candidates:
-            candidates.sort(reverse=True)
+
+        # Exact distinctive component.
+        candidate_keys = set(_BRAND_COMPONENT_INDEX.get(qt, set()))
+
+        # One-edit typo in a distinctive component.
+        if not candidate_keys:
+            candidate_keys.update(_BRAND_COMPONENT_DELETE_INDEX.get(qt, set()))
+            for i in range(len(qt)):
+                candidate_keys.update(_BRAND_COMPONENT_DELETE_INDEX.get(qt[:i] + qt[i + 1:], set()))
+
+        if candidate_keys:
+            candidates = sorted(
+                (( _brand_alias_similarity(qt, key), key) for key in candidate_keys),
+                reverse=True,
+            )
             top_score, top_key = candidates[0]
             second_score = candidates[1][0] if len(candidates) > 1 else 0.0
-            # Require a clear winner for fuzzy brand spelling.
             if top_score >= 0.84 or (top_score >= 0.79 and top_score - second_score >= 0.07):
                 return top_key
 
@@ -1489,8 +1531,17 @@ def fuzzy_brand_key(text: str) -> Optional[str]:
         for b in set(bt):
             token_to_keys.setdefault(b, set()).add(key)
 
+    # Only inspect brands already surfaced by the bounded component index.
+    candidate_brand_keys = set()
+    for qt in q_tokens:
+        candidate_brand_keys.update(_BRAND_COMPONENT_INDEX.get(qt, set()))
+        if len(qt) >= 4:
+            candidate_brand_keys.update(_BRAND_COMPONENT_DELETE_INDEX.get(qt, set()))
+            for i in range(len(qt)):
+                candidate_brand_keys.update(_BRAND_COMPONENT_DELETE_INDEX.get(qt[:i] + qt[i + 1:], set()))
+
     best_key, best_score = None, 0.0
-    for key in BRAND_KEYS:
+    for key in candidate_brand_keys:
         bt = brand_tokens_by_key.get(key, [])
         if not bt:
             continue
@@ -1835,6 +1886,7 @@ def _fragrance_phonetic_key(token: str) -> str:
         v = v.replace("j", "h")
         v = v.replace("w", "v")
         v = v.replace("y", "i")
+        v = v.replace("kh", "h")
 
         # Remove vowels after consonant normalization.
         v = re.sub(r"[aeiouy]+", "", v)
@@ -1883,153 +1935,283 @@ def _name_token_score(query_token: str, product_token: str) -> float:
     return best
 
 
+# ---------- Bounded indexed fragrance search ----------
+# Search must never compare a query against every fragrance with SequenceMatcher.
+# Build small inverted indexes lazily from the already client-visible fragrance groups.
+_FAST_TOKEN_INDEX: Optional[Dict[str, set]] = None
+_FAST_PHONETIC_INDEX: Optional[Dict[str, set]] = None
+_FAST_DELETE_INDEX: Optional[Dict[str, set]] = None
+_FAST_PREFIX_INDEX: Optional[Dict[str, set]] = None
+_FAST_GROUP_BY_KEY: Optional[Dict[str, dict]] = None
 
-BRAND_GENERIC_WORDS = {"parfums", "parfum", "perfume", "parfyum", "collection", "the", "la", "de", "of", "by", "and"}
-SEARCH_TOKEN_ALIASES = {"lav":"love", "gibiskus":"hibiscus", "eksklyuziv":"exclusif", "ekskluziv":"exclusif"}
-SEARCH_FILLER_WORDS = {
-    "parfum", "parfums", "perfume", "perfumes", "parfyum", "parfyumy", "парфюм", "парфюмы",
-    "духи", "дух", "аромат", "ароматы", "аромата", "парфюмерия",
-    "парфюмерный", "парфюмерная", "туалетная", "вода", "купить", "цена",
-    "цены", "отзывы", "отзыв", "ноты", "оригинал", "оригинальные",
-    "оригинальный", "фрагрантика", "fragrantica", "fragrance", "аналог",
-    "аналоги", "похожий", "похожие", "похожее", "пахнет", "чем", "как",
-    "состав", "мужской", "мужская", "мужское", "женский", "женская",
-    "женское", "мужчин", "женщин", "распив", "пробник", "тестер",
-}
 
-@lru_cache(maxsize=1)
-def _build_search_v2_indexes():
-    literal, canonical, by_brand = {}, {}, {}
+def _build_fast_search_indexes():
+    global _FAST_TOKEN_INDEX, _FAST_PHONETIC_INDEX, _FAST_DELETE_INDEX, _FAST_PREFIX_INDEX, _FAST_GROUP_BY_KEY
+    if _FAST_TOKEN_INDEX is not None:
+        return
+
+    token_index: Dict[str, set] = {}
+    phonetic_index: Dict[str, set] = {}
+    delete_index: Dict[str, set] = {}
+    prefix_index: Dict[str, set] = {}
+    group_by_key: Dict[str, dict] = {}
+
     for p in FAST_SEARCH_GROUPS_ALL:
-        if not variant_is_client_friendly(p):
+        gk = group_key(p)
+        if gk in group_by_key:
             continue
-        s = norm(p.get("name", ""))
-        bkey = BRAND_FOR_ID.get(p.get("id"), "")
-        brand = norm(BRAND_DISPLAY.get(bkey, bkey))
-        if brand:
-            s = re.sub(rf"^\s*{re.escape(brand)}\s*", " ", s, flags=re.I)
-        s = re.sub(r"\b\d+(?:[.,]\d+)?\s*ml\b", " ", s, flags=re.I)
-        s = re.sub(r"\s*\((?:m|w|u)\)", " ", s, flags=re.I)
-        s = re.sub(r"\b(?:eau\s+de\s+parfum|eau\s+de\s+toilette|extrait\s+de\s+parfum|parfum|parfume|perfume|cologne|edp|edt|extrait|парфюм|парфюмерная\s+вода|туалетная\s+вода|духи)\b", " ", s, flags=re.I)
-        s = re.sub(r"\btester\b|\bпробник\b", " ", s, flags=re.I)
-        s = re.sub(r"\s+", " ", s).strip(" -·")
-        toks = [x for x in re.findall(r"[a-zа-яё0-9]+", s.translate(RU_TO_EN)) if x not in SEARCH_FILLER_WORDS and len(x)>1]
-        if not toks: continue
-        key=tuple(toks)
-        literal.setdefault(key,[]).append(p)
-        ckey=tuple(_search_token_canon(x) for x in toks)
-        canonical.setdefault(ckey,[]).append(p)
-        by_brand.setdefault(bkey,[]).append((p,toks,ckey))
-    return literal, canonical, by_brand
+        group_by_key[gk] = p
 
-def _search_token_canon(token: str) -> str:
-    s=SEARCH_TOKEN_ALIASES.get(str(token or "").lower(),str(token or "").lower())
-    s=s.replace("ph","f").replace("th","t").replace("z","s").replace("c","k").replace("q","k")
-    if s.endswith("e") and not s.endswith("ee") and len(s)>=4: s += "e"
-    return s
+        base = _fast_base_name(p).translate(RU_TO_EN)
+        for token in re.findall(r"[a-z0-9]+", base):
+            if len(token) < 2:
+                continue
+            token_index.setdefault(token, set()).add(gk)
+            if len(token) >= 4:
+                prefix_index.setdefault(token[:4], set()).add(gk)
 
-def _explicit_brand_v2(query: str):
-    nq=normalize_ai_query(query).translate(RU_TO_EN)
-    toks=re.findall(r"[a-z0-9]+",nq)
-    found=[]
-    for bk in BRAND_KEYS:
-        label=norm(BRAND_DISPLAY.get(bk,bk)).translate(RU_TO_EN)
-        bt=tuple(re.findall(r"[a-z0-9]+",label))
-        if not bt or len(bt)>len(toks): continue
-        if len(bt)==1 and bt[0] in BRAND_GENERIC_WORDS: continue
-        for i in range(len(toks)-len(bt)+1):
-            if tuple(toks[i:i+len(bt)])==bt:
-                found.append((len(bt),bk,i,i+len(bt))); break
-    if not found: return None,toks
-    _,bk,i,j=max(found)
-    return bk,toks[:i]+toks[j:]
+            pk = _fragrance_phonetic_key(token)
+            if pk:
+                phonetic_index.setdefault(pk, set()).add(gk)
 
-def _query_tokens_v2(query: str, brand_key=None):
-    nq=normalize_ai_query(query).translate(RU_TO_EN)
-    toks=re.findall(r"[a-z0-9]+",nq)
-    if brand_key:
-        label=norm(BRAND_DISPLAY.get(brand_key,brand_key)).translate(RU_TO_EN)
-        bt=tuple(re.findall(r"[a-z0-9]+",label))
-        for i in range(len(toks)-len(bt)+1):
-            if tuple(toks[i:i+len(bt)])==bt:
-                toks=toks[:i]+toks[i+len(bt):]; break
-    return [SEARCH_TOKEN_ALIASES.get(t,t) for t in toks if t not in SEARCH_FILLER_WORDS]
+            # One-edit typo candidates. This index is deliberately bounded:
+            # only deletion keys are stored, never pairwise comparisons.
+            if len(token) >= 4:
+                for i in range(len(token)):
+                    delete_index.setdefault(token[:i] + token[i + 1:], set()).add(gk)
 
-def _v53_fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
-    """Universal local perfume search for the ENTIRE catalog.
+    _FAST_TOKEN_INDEX = token_index
+    _FAST_PHONETIC_INDEX = phonetic_index
+    _FAST_DELETE_INDEX = delete_index
+    _FAST_PREFIX_INDEX = prefix_index
+    _FAST_GROUP_BY_KEY = group_by_key
 
-    Flow: detect an explicitly written brand -> hard-filter to that brand ->
-    fuzzy-match the remaining fragrance words. If no brand is explicit, rank
-    all catalog fragrances by their name similarity. Nothing is hard-coded to
-    Chanel or any other individual house.
+
+def _fast_candidate_group_keys(name_tokens: List[str], resolved_brand: Optional[str]) -> set:
+    """Retrieve a bounded candidate set using exact, phonetic and one-edit indexes."""
+    _build_fast_search_indexes()
+    assert _FAST_TOKEN_INDEX is not None
+    assert _FAST_PHONETIC_INDEX is not None
+    assert _FAST_DELETE_INDEX is not None
+    assert _FAST_PREFIX_INDEX is not None
+    assert _FAST_GROUP_BY_KEY is not None
+
+    if not name_tokens:
+        if resolved_brand:
+            return {
+                gk for gk, p in _FAST_GROUP_BY_KEY.items()
+                if BRAND_FOR_ID.get(p.get("id"), "") == resolved_brand
+            }
+        return set(_FAST_GROUP_BY_KEY)
+
+    per_token = []
+    for token in name_tokens:
+        token = canonical_token(token).lower()
+
+        # Exact token hits are terminal at the candidate-retrieval level.
+        # Do not let a broad phonetic bucket (e.g. ALTHAIR -> many LEATHER
+        # products) compete with a real exact product token.
+        exact = set(_FAST_TOKEN_INDEX.get(token, set()))
+        if exact:
+            if resolved_brand:
+                brand_exact = {
+                    gk for gk in exact
+                    if BRAND_FOR_ID.get(_FAST_GROUP_BY_KEY[gk].get("id"), "") == resolved_brand
+                }
+                if brand_exact:
+                    candidates = brand_exact
+                else:
+                    # An exact token exists in another house, but not inside the
+                    # explicitly requested brand. Fall through to typo/phonetic
+                    # retrieval within the brand instead of returning nothing.
+                    candidates = set()
+            else:
+                candidates = exact
+        else:
+            candidates = set()
+
+        if not candidates:
+            pk = _fragrance_phonetic_key(token)
+            if pk:
+                phonetic_hits = _FAST_PHONETIC_INDEX.get(pk, set())
+                # Phonetic consonant skeletons can collide for short/common
+                # words (e.g. LEATHER). Use them only when the bucket is small;
+                # exact and one-edit indexes remain the primary path.
+                if len(phonetic_hits) <= 12:
+                    candidates.update(phonetic_hits)
+
+            # One-character insertion/deletion/substitution typo.
+            # Check both directions: the product may be one character longer
+            # than the query (ALTAIR -> ALTHAIR), or the query may contain the
+            # extra/mistyped character.
+            if len(token) >= 4:
+                candidates.update(_FAST_DELETE_INDEX.get(token, set()))
+                for i in range(len(token)):
+                    candidates.update(_FAST_DELETE_INDEX.get(token[:i] + token[i + 1:], set()))
+
+            # Bounded prefix fallback handles common abbreviated/misspelled
+            # forms such as "chans" -> CHANCE without scanning the catalog.
+            if not candidates and len(token) >= 4:
+                prefix_hits = _FAST_PREFIX_INDEX.get(token[:4], set())
+                if len(prefix_hits) <= 200:
+                    candidates.update(prefix_hits)
+
+        # If no indexed hit exists, do not fall back to a full-catalog fuzzy scan.
+        per_token.append(candidates)
+
+    if not per_token:
+        return set()
+
+    # Prefer intersection: every requested name word should identify the same fragrance.
+    intersection = set.intersection(*per_token)
+    candidates = intersection if intersection else set.union(*per_token)
+
+    if resolved_brand:
+        candidates = {
+            gk for gk in candidates
+            if BRAND_FOR_ID.get(_FAST_GROUP_BY_KEY[gk].get("id"), "") == resolved_brand
+        }
+        # A broad phonetic bucket may contain no item from the requested brand.
+        # Retry the bounded prefix bucket before giving up.
+        if not candidates and len(name_tokens) == 1 and len(name_tokens[0]) >= 4:
+            prefix_hits = _FAST_PREFIX_INDEX.get(name_tokens[0][:4], set())
+            if len(prefix_hits) <= 200:
+                candidates = {
+                    gk for gk in prefix_hits
+                    if BRAND_FOR_ID.get(_FAST_GROUP_BY_KEY[gk].get("id"), "") == resolved_brand
+                }
+    return candidates
+
+
+def _fast_product_name_tokens(p: dict, resolved_brand: Optional[str]) -> List[str]:
+    base = _fast_base_name(p).translate(RU_TO_EN)
+    tokens = re.findall(r"[a-z0-9]+", base)
+
+    # Even without a user-supplied brand, product-side brand words must not be
+    # treated as fragrance-name words. Use the catalog's detected brand for the
+    # current product. This makes a bare "DELINA" exact rather than requiring the
+    # user to type the house name as well.
+    product_brand = resolved_brand or BRAND_FOR_ID.get(p.get("id"), "")
+    if not product_brand:
+        return tokens
+
+    brand_text = normalize_ai_query(BRAND_DISPLAY.get(product_brand, product_brand)).translate(RU_TO_EN)
+    brand_tokens = re.findall(r"[a-z0-9]+", brand_text)
+    kept = []
+    used = set()
+    for pt in tokens:
+        match = next(
+            (i for i, bt in enumerate(brand_tokens)
+             if i not in used and _brand_match_score(pt, bt) >= 0.82),
+            None,
+        )
+        if match is not None:
+            used.add(match)
+        else:
+            kept.append(pt)
+    return kept
+
+
+def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
+    """Universal bounded search for the client-facing perfume catalog.
+
+    Priority:
+      1) exact fragrance name after removing brand/service words;
+      2) exact phonetic/transliteration match;
+      3) indexed one-edit typo candidates;
+      4) score only that small candidate set.
+
+    There is intentionally no full-catalog SequenceMatcher fallback.
     """
     if not is_name_like_query(query):
         return []
 
-    # IMPORTANT: resolve the brand from the ORIGINAL user query, not from the
-    # already-normalized query. Normalization can turn a Russian brand alias
-    # such as «парфюм де марли» into the generic Latin token «parfums», after
-    # which the brand resolver can no longer see the original multi-word alias.
-    # Keeping the original query here makes brand recognition independent of
-    # word order and preserves the hard brand boundary.
-    q = normalize_ai_query(query)
     resolved_brand = fuzzy_brand_key(query)
     name_tokens = _query_name_tokens(query, resolved_brand)
-
-    # A brand-only query should return the brand catalog rather than fail because
-    # there are no remaining fragrance words.
     brand_only = resolved_brand is not None and not name_tokens
 
-    # Search only the pre-grouped client-facing catalog. When a brand is known
-    # this becomes a very small candidate set (for example, only PDM fragrances),
-    # while the no-brand path still covers the whole catalog.
-    candidate_products = (
-        FAST_SEARCH_GROUPS_BY_BRAND.get(resolved_brand, [])
-        if resolved_brand
-        else FAST_SEARCH_GROUPS_ALL
-    )
-    groups = {}
-    for p in candidate_products:
-        gk = group_key(p)
-        if gk not in groups:
-            groups[gk] = p
+    _build_fast_search_indexes()
+    assert _FAST_GROUP_BY_KEY is not None
+
+    candidate_keys = _fast_candidate_group_keys(name_tokens, resolved_brand)
+    if not candidate_keys:
+        return []
+
+    candidates = [
+        _FAST_GROUP_BY_KEY[gk] for gk in candidate_keys
+        if gk in _FAST_GROUP_BY_KEY
+    ]
+
+    # Exact/phonetic terminal matching. A plain "DELINA" must not expand to
+    # DELINA EXCLUSIF or DELINA LA ROSEE; "ALTHAIR" must not expand to ALTHAIR
+    # EXCLUSIF. This is checked before fuzzy scoring.
+    if name_tokens and not brand_only:
+        exact_rows = []
+        for p in candidates:
+            ptokens = _fast_product_name_tokens(p, resolved_brand)
+            if len(ptokens) != len(name_tokens):
+                continue
+
+            matched = set()
+            ok = True
+            for qt in name_tokens:
+                qk = _fragrance_phonetic_key(qt)
+                found = None
+                for idx, pt in enumerate(ptokens):
+                    if idx in matched:
+                        continue
+                    # Token equality is the strongest terminal condition.
+                    if qt == pt:
+                        found = idx
+                        break
+                    # Equal phonetic key covers Russian/Latin transliteration,
+                    # but does not equate ALTHAIR with ALTAIR.
+                    if qk and qk == _fragrance_phonetic_key(pt):
+                        found = idx
+                        break
+                if found is None:
+                    ok = False
+                    break
+                matched.add(found)
+
+            if ok:
+                exact_rows.append(p)
+
+        if exact_rows:
+            exact_rows.sort(key=lambda p: ai_fragrance_title(p).lower())
+            return exact_rows[:max(1, min(int(limit or 12), 12))]
 
     scored = []
-    for p in groups.values():
-        base = _fast_base_name(p)
-        base_latin = base.translate(RU_TO_EN)
-        raw_tokens = re.findall(r"[a-z0-9]+", base_latin)
-        if not raw_tokens:
+    for p in candidates:
+        if resolved_brand and BRAND_FOR_ID.get(p.get("id"), "") != resolved_brand:
+            continue
+
+        ptokens = _fast_product_name_tokens(p, resolved_brand)
+        if not ptokens and name_tokens:
             continue
 
         if brand_only:
             score = 20.0
         else:
-            sims = [max(_fragrance_token_score(t, rt) for rt in raw_tokens) for t in name_tokens]
-            # Every requested name word must map to the same product.
-            # When the brand is already a hard filter, allow realistic
-            # phonetic/transliteration errors in the fragrance name itself.
-            # Example: «диор саваж» -> SAUVAGE. The brand filter prevents
-            # unrelated houses from entering the result.
+            sims = [
+                max((_fragrance_token_score(qt, pt) for pt in ptokens), default=0.0)
+                for qt in name_tokens
+            ]
             threshold = 0.72 if resolved_brand else 0.78
             if not sims or any(v < threshold for v in sims):
                 continue
 
-            exact = sum(1 for t in name_tokens if any(t == rt for rt in raw_tokens))
             avg = sum(sims) / len(sims)
+            exact_count = sum(
+                1 for qt in name_tokens
+                if any(qt == pt for pt in ptokens)
+            )
+            # Prefer the shortest fragrance-name match when the requested words
+            # are equally close. This prevents a typo for ALTHAIR from expanding
+            # into ALTHAIR EXCLUSIF, and applies to flankers catalog-wide.
+            extra_tokens = max(0, len(ptokens) - len(name_tokens))
+            score = avg * 100 + exact_count * 45 - extra_tokens * 28
 
-            # For an explicitly recognized brand, an exact product token is a
-            # strong anchor. This prevents unrelated same-brand items from
-            # winning just because a short word has a misleading fuzzy score.
-            # Example: «ксерджофф наксос» must prefer NAXOS, not K'BRIDGE CLUB.
-            if resolved_brand and exact == 0:
-                if not all(v >= 0.80 for v in sims):
-                    continue
-
-            score = avg * 100 + exact * 45
-
-            # Penalize products where the best match is only a weak partial word.
-            # This keeps Chance above Chancery, while still accepting real typos.
             if all(v >= 0.90 for v in sims):
                 score += 35
 
@@ -2039,107 +2221,15 @@ def _v53_fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
         return []
 
     scored.sort(key=lambda row: (-row[0], ai_fragrance_title(row[1]).lower()))
-    best = scored[0][0]
 
     if brand_only:
-        return [p for _, p in scored[:max(1, min(limit, 100))]]
+        return [p for _, p in scored[:max(1, min(int(limit or 12), 12))]]
 
-    # Exact fragrance-name matches are terminal: do not expand an exact request
-    # into a flanker/exclusif merely because it shares the same first word.
-    # Example: «... ALTHAIR» must prefer the ordinary ALTHAIR group and not
-    # automatically include ALTHAIR EXCLUSIF. The same rule applies catalog-wide.
-    exact_name_rows = []
-    for score, p in scored:
-        base = _fast_base_name(p).translate(RU_TO_EN)
-        product_name_tokens = re.findall(r"[a-z0-9]+", base)
-        # Remove the resolved brand from the product-side token list.
-        if resolved_brand:
-            bt = ai_search_tokens(BRAND_DISPLAY.get(resolved_brand, resolved_brand))
-            used_brand = set()
-            kept = []
-            for pt in product_name_tokens:
-                match = next((i for i, b in enumerate(bt) if i not in used_brand and token_similarity(pt, b) >= 0.82), None)
-                if match is not None:
-                    used_brand.add(match)
-                else:
-                    kept.append(pt)
-            product_name_tokens = kept
-
-        # Terminal exact-name match is phonetic, not character-literal:
-        # «альтаир» and ALTHAIR are the same requested name, while
-        # ALTHAIR EXCLUSIF contains an extra distinguishing token and therefore
-        # must not be returned for a plain «альтаир» request.
-        if name_tokens and len(product_name_tokens) == len(name_tokens):
-            used_product = set()
-            all_exact = True
-            for qt in name_tokens:
-                match = None
-                for idx, pt in enumerate(product_name_tokens):
-                    if idx in used_product:
-                        continue
-                    if _fragrance_token_score(qt, pt) >= 0.90:
-                        match = idx
-                        break
-                if match is None:
-                    all_exact = False
-                    break
-                used_product.add(match)
-            if all_exact:
-                exact_name_rows.append((score, p))
-
-    if exact_name_rows:
-        exact_name_rows.sort(key=lambda row: (-row[0], ai_fragrance_title(row[1]).lower()))
-        return [p for _, p in exact_name_rows][:max(1, min(limit, 100))]
-
-    # For named queries, do not fill the list with merely related products.
-    # A typo match must be close to the best match.
+    best = scored[0][0]
+    # Typo matches should stay close to the best candidate and must not fill the
+    # list with unrelated products from the same brand.
     threshold = best - (16 if resolved_brand else 12)
-    return [p for score, p in scored if score >= threshold][:max(1, min(limit, 100))]
-
-
-
-def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
-    raw=str(query or "").strip()
-    if not raw: return []
-    literal, canonical, by_brand = _build_search_v2_indexes()
-    brand_key,_ = _explicit_brand_v2(raw)
-    q_tokens=_query_tokens_v2(raw,brand_key)
-    if not q_tokens or len(q_tokens)>7: return []
-    qkey=tuple(q_tokens)
-    has_cyr=bool(re.search(r"[а-яё]",raw,re.I))
-    if brand_key:
-        rows=by_brand.get(brand_key,[])
-        exact=[p for p,t,c in rows if tuple(t)==qkey]
-        if exact: return exact[:max(1,min(limit,100))]
-        cq=tuple(_search_token_canon(t) for t in q_tokens)
-        near=[p for p,t,c in rows if c==cq]
-        if near: return near[:max(1,min(limit,100))]
-        scored=[]
-        for p,t,c in rows:
-            if len(t)!=len(q_tokens): continue
-            sims=[_fragrance_token_score(a,b) for a,b in zip(q_tokens,t)]
-            if sims and min(sims)>=0.90: scored.append((sum(sims)/len(sims),p))
-        if scored:
-            scored.sort(key=lambda x:(-x[0],ai_fragrance_title(x[1]).lower()))
-            best=scored[0][0]
-            return [p for s,p in scored if s>=best-0.02][:max(1,min(limit,100))]
-    exact=literal.get(qkey,[])
-    if exact:
-        if has_cyr:
-            cq=tuple(_search_token_canon(t) for t in q_tokens)
-            extra=canonical.get(cq,[])
-            out=[]; seen=set()
-            for p in list(exact)+list(extra):
-                gk=group_key(p)
-                if gk not in seen: seen.add(gk); out.append(p)
-            return out[:max(1,min(limit,100))]
-        return exact[:max(1,min(limit,100))]
-    cq=tuple(_search_token_canon(t) for t in q_tokens)
-    near=canonical.get(cq,[])
-    if near: return near[:max(1,min(limit,100))]
-    try: fuzzy=_v53_fast_ai_name_search(raw,limit=limit)
-    except Exception: fuzzy=[]
-    return [p for p in fuzzy if variant_is_client_friendly(p)][:max(1,min(limit,100))]
+    return [p for score, p in scored if score >= threshold][:max(1, min(int(limit or 12), 12))]
 
 def fast_ai_response(query: str, candidates: List[dict]) -> str:
     lines = ["💬 <b>PARFERA AI</b>", "", f"Нашёл варианты по запросу «{html.escape(query)}»:", ""]
