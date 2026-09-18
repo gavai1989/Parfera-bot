@@ -2478,7 +2478,7 @@ def product_group(item):
 def product_text(p):
     title = display_name(p)
     raw = str(p.get("name", ""))
-    lines = [f"<b>{title}</b>", "✨ Оригинальная парфюмерия"]
+    lines = [f"<b>{title}</b>", "✨ Оригинальный аромат"]
     # Keep supplier technical markers available, but present the main metadata
     # in a compact premium-card style.
     meta = []
@@ -2496,7 +2496,7 @@ def product_text(p):
         lines += ["Свежий, яркий и чувственный аромат с мятой, зелёным яблоком, лимоном, ванилью и древесными нотами.", ""]
     else:
         lines += ["Нишевая и оригинальная парфюмерия PARFERA.", ""]
-    lines.append("<b>ВЫБЕРИТЕ ОБЪЁМ И ВАРИАНТ</b>")
+    lines.append("<b>ВЫБЕРИТЕ ОБЪЁМ</b>")
     return "\n".join(lines)
 
 
@@ -2813,9 +2813,9 @@ def brand_products_kb(brand_id: str, page: int = 0):
 def cart_text(uid: int):
     items = CARTS.get(uid, [])
     if not items:
-        return "🛒 <b>Ваша корзина пуста</b>\n\nДобавьте аромат из каталога."
+        return "🛒 <b>Корзина пуста</b>\n\nВыберите аромат и добавьте его сюда."
     total = sum(x["price"] * x["qty"] for x in items)
-    lines = [f"🛒 <b>Ваша корзина</b>\n{len(items)} позиция(й)\n"]
+    lines = [f"🛒 <b>Корзина</b>\n{len(items)} поз.\n"]
     for i, x in enumerate(items, 1):
         lines.append(f"{i}. {x['name']}\n   {x['type']} · {x['volume']} · {x['qty']} × {rub(x['price'])}")
     lines.append(f"\n<b>Итого: {rub(total)}</b>")
@@ -2874,7 +2874,7 @@ async def show_search_results(target_message, user_id: int, page: int = 0):
     if not matches:
         await edit_or_replace(target_message, f'🔎 По запросу «{query}» ничего не найдено.\n\nПопробуйте название бренда или аромата.', back_home_kb())
         return
-    await edit_or_replace(target_message, f'🔎 Найдено: <b>{len(matches)}</b>\nЗапрос: «{query}»\n\nВыберите товар:', results_kb(items, page, len(matches)))
+    await edit_or_replace(target_message, f'🔎 <b>Найдено: {len(matches)}</b>\n«{query}»\n\nВыберите аромат:', results_kb(items, page, len(matches)))
 
 
 async def send_product(message, p, brand_id=None, brand_page=0, gender=None):
@@ -2890,7 +2890,7 @@ async def send_product(message, p, brand_id=None, brand_page=0, gender=None):
     await message.answer(text, reply_markup=kb)
 
 
-HOME_TEXT = "<b>PARFERA</b>\n\nНишевая парфюмерия и персональный подбор.\n\n💬 <b>Просто напишите, какой аромат вы ищете.</b>\nНапример: «женский сладкий до 7000», «Versace Eros 100 мл» или «что-нибудь похожее на Erba Pura»."
+HOME_TEXT = "<b>PARFERA</b>\n\n✨ Оригинальная нишевая парфюмерия.\n\n<b>Что ищем?</b>\nНапишите бренд или аромат — например: «Versace Eros 100 мл» или «Erba Pura»."
 MAIN_IMAGE = os.path.join("images", "parfera_ai_main.jpg")
 
 
@@ -2925,7 +2925,7 @@ async def home(callback: CallbackQuery, state: FSMContext):
 async def catalog(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     visible_groups_total = sum(len(v) for v in BRAND_GROUPS.values())
-    text = f"🛍 <b>Каталог PARFERA</b>\n\nАроматов: <b>{visible_groups_total}</b> · Брендов: <b>{len(BRAND_KEYS)}</b>\n\nВыберите раздел:"
+    text = f"🛍 <b>Каталог PARFERA</b>\n\n<b>{visible_groups_total}</b> ароматов · <b>{len(BRAND_KEYS)}</b> брендов\n\nВыберите категорию:"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⭐ Популярные бренды", callback_data="cat:popular")],
         [InlineKeyboardButton(text="💎 Нишевая парфюмерия", callback_data="cat:niche")],
@@ -2955,7 +2955,7 @@ async def catalog_category(callback: CallbackQuery):
         title = "👩 Для неё" if gender == "w" else "👨 Для него" if gender == "m" else "⚪ Унисекс"
         keys = gender_brand_keys(gender)
         total = sum(sum(1 for g in BRAND_GROUPS[k] if _group_matches_gender(g, gender)) for k in keys)
-        await edit_or_replace(callback.message, f"<b>{title}</b>\n\nБрендов: <b>{len(keys)}</b> · Ароматов: <b>{total}</b>\n\nВыберите бренд:", gender_brands_kb(gender, 0))
+        await edit_or_replace(callback.message, f"<b>{title}</b>\n\n<b>{len(keys)}</b> брендов · <b>{total}</b> ароматов\n\nВыберите бренд:", gender_brands_kb(gender, 0))
         await callback.answer()
 
 
@@ -2964,7 +2964,7 @@ async def gender_brands_page(callback: CallbackQuery):
     _, gender, page = callback.data.split(":")
     title = "👩 Для неё" if gender == "w" else "👨 Для него" if gender == "m" else "⚪ Унисекс"
     keys = gender_brand_keys(gender)
-    await edit_or_replace(callback.message, f"<b>{title}</b>\n\nБрендов: <b>{len(keys)}</b>\n\nВыберите бренд:", gender_brands_kb(gender, int(page)))
+    await edit_or_replace(callback.message, f"<b>{title}</b>\n\n<b>{len(keys)}</b> брендов\n\nВыберите бренд:", gender_brands_kb(gender, int(page)))
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("gbrand:"))
@@ -2981,7 +2981,7 @@ async def gender_brand_page(callback: CallbackQuery):
 @dp.callback_query(F.data.startswith("brands:"))
 async def brands_page(callback: CallbackQuery):
     page = int(callback.data.split(":")[1])
-    text = f"🛍 <b>Бренды PARFERA</b>\n\nДоступно брендов: <b>{len(BRAND_KEYS)}</b>\n\nВыберите бренд:"
+    text = f"🛍 <b>Бренды PARFERA</b>\n\n<b>{len(BRAND_KEYS)}</b> брендов\n\nВыберите бренд:"
     await edit_or_replace(callback.message, text, brands_kb(page))
     await callback.answer()
 
@@ -3004,7 +3004,7 @@ async def brand_page(callback: CallbackQuery):
 async def ai_start(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await edit_or_replace(callback.message,
-        "💬 <b>PARFERA AI</b>\n\nПросто напишите, что вы ищете — я помогу найти реальные позиции в каталоге PARFERA.\n\n🧠 <b>Почему умный подбор может занять немного времени?</b>\nPARFERA AI анализирует ваш запрос, учитывает характер аромата, пол, сезон, настроение и другие пожелания, затем подбирает и проверяет реальные позиции нашего каталога. Поэтому такой подбор может занять несколько секунд — это нормально, бот не завис.\n\n⚡ <b>Если нужно просто быстро найти конкретный аромат</b>, используйте обычный поиск по каталогу — он работает значительно быстрее и ищет по бренду, названию или артикулу.\n\nНапример:\n• «Женский сладкий до 7000 ₽»\n• «Versace Eros 100 мл»\n• «Мужской свежий аромат»\n• «Что есть похожее на Erba Pura?»",
+        "💬 <b>PARFERA AI</b>\n\nОпишите, какой аромат хотите — AI подберёт варианты из каталога.\n\nНапример:\n• «женский сладкий до 7000 ₽»\n• «мужской свежий»\n• «похожий на Erba Pura»\n\n⚡ Нужен конкретный аромат? Используйте обычный поиск — он быстрее.",
         InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="← Главное меню", callback_data="home")]]))
     await callback.answer()
 
@@ -3017,7 +3017,7 @@ async def ai_back(callback: CallbackQuery):
         rows = [[InlineKeyboardButton(text=f"{fragrance_title(p)[:42]}", callback_data=f"product:{p['id']}:ai:0")] for p in results[:10]]
         rows.append([InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")])
         rows.append([InlineKeyboardButton(text="← Главное меню", callback_data="home")])
-        await edit_or_replace(callback.message, "💬 <b>Результаты PARFERA AI</b>\n\nВыберите аромат:", InlineKeyboardMarkup(inline_keyboard=rows))
+        await edit_or_replace(callback.message, "💬 <b>Результаты</b>\n\nВыберите аромат:", InlineKeyboardMarkup(inline_keyboard=rows))
     else:
         await edit_or_replace(callback.message, "💬 <b>PARFERA AI</b>\n\nНапишите следующий запрос.", back_home_kb())
     await callback.answer()
@@ -3028,7 +3028,7 @@ async def ai_back(callback: CallbackQuery):
 @dp.callback_query(F.data.in_({"search", "catalog_search"}))
 async def search(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SearchState.waiting)
-    await edit_or_replace(callback.message, "🔎 <b>Быстрый поиск по каталогу</b>\n\nВведите бренд, название аромата или артикул.\n\n⚡ <b>Этот поиск работает быстро:</b> он сразу проверяет наш каталог по названию, бренду или артикулу и не использует длительный AI-анализ.\n\n🧠 <b>Нужен подбор по описанию?</b> Например: «женский свежий с бергамотом на осень» — выбирайте PARFERA AI. Такой подбор может занять немного больше времени, потому что AI анализирует пожелания и подбирает подходящие реальные позиции.\n\nНапример: <b>Versace Eros</b>, <b>Erba Pura</b> или <b>000-002</b>.", back_home_kb())
+    await edit_or_replace(callback.message, "🔎 <b>Поиск по каталогу</b>\n\nВведите бренд, аромат или артикул.\n\n⚡ Быстрый поиск сразу проверит каталог.\n\nНапример: <b>Versace Eros</b>, <b>Erba Pura</b> или <b>000-002</b>.", back_home_kb())
     await callback.answer()
 
 
@@ -3036,7 +3036,7 @@ async def search(callback: CallbackQuery, state: FSMContext):
 async def do_search(message: Message, state: FSMContext):
     query = message.text.strip() if message.text else ""
     if not query:
-        await message.answer("Введите текст для поиска.")
+        await message.answer("🔎 Напишите бренд, название аромата или артикул.")
         return
     USER_SEARCH[message.from_user.id] = query
     print(f"PARFERA SEARCH QUERY: {query!r}", flush=True)
@@ -3134,8 +3134,8 @@ async def ai_free_text(message: Message, state: FSMContext):
                 flush=True,
             )
             await message.answer(
-                f"🔎 По запросу «{html.escape(text)}» точной позиции в каталоге не найдено.\\n\\n"
-                "Попробуйте написать название на английском или чуть иначе.",
+                f"🔎 По запросу «{html.escape(text)}» точной позиции не найдено.\\n\\n"
+                "Попробуйте написать название иначе.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="🛍 Открыть каталог", callback_data="catalog")],
                     [InlineKeyboardButton(text="💬 Новый запрос", callback_data="ai_start")],
@@ -3170,7 +3170,7 @@ async def ai_free_text(message: Message, state: FSMContext):
     except Exception as e:
         print(f"PARFERA AI error: {type(e).__name__}: {e!r}")
         traceback.print_exc()
-        await message.answer("🤖 Сейчас не получилось выполнить умный поиск. Попробуйте ещё раз или воспользуйтесь каталогом.", reply_markup=home_kb())
+        await message.answer("🤖 Не удалось выполнить подбор. Попробуйте ещё раз или откройте каталог.", reply_markup=home_kb())
         return
     finally:
         typing_task.cancel()
@@ -3283,7 +3283,7 @@ async def checkout(callback: CallbackQuery):
     if not ADMIN_CHAT_ID:
         await edit_or_replace(
             callback.message,
-            "📦 <b>Заказ</b>\n\nСейчас приём заказов ещё не настроен. Администратору нужно один раз указать <b>PARFERA_ADMIN_CHAT_ID</b> в Render.",
+            "📦 <b>Оформление заказа</b>\n\nПриём заказов ещё не настроен. Укажите <b>PARFERA_ADMIN_CHAT_ID</b> в Render.",
             InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="← Корзина", callback_data="cart")],
                 [InlineKeyboardButton(text="← Главное меню", callback_data="home")],
@@ -3325,7 +3325,7 @@ async def checkout(callback: CallbackQuery):
     CARTS.pop(uid, None)
     await edit_or_replace(
         callback.message,
-        f"✅ <b>Заказ принят!</b>\n\nНомер заказа: <b>№{order_no}</b>\n\nВаш заказ отправлен консультанту PARFERA <b>@Parfera</b>. Он свяжется с вами в Telegram.",
+        f"✅ <b>Заказ принят!</b>\n\n№<b>{order_no}</b>\n\nЗаказ отправлен консультанту <b>@Parfera</b>. Он свяжется с вами в Telegram.",
         InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💬 Консультант @Parfera", url="https://t.me/Parfera")],
             [InlineKeyboardButton(text="🛍 Продолжить покупки", callback_data="catalog")],
@@ -3342,13 +3342,13 @@ async def noop(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "popular")
 async def popular(callback: CallbackQuery):
-    await edit_or_replace(callback.message, "⭐ <b>Популярное</b>\n\nПодключим после теста каталога.", back_home_kb())
+    await edit_or_replace(callback.message, "⭐ <b>Популярное</b>\n\nРаздел скоро будет доступен.", back_home_kb())
     await callback.answer()
 
 
 @dp.callback_query(F.data == "new")
 async def new(callback: CallbackQuery):
-    await edit_or_replace(callback.message, "🆕 <b>Новинки</b>\n\nПодключим после теста каталога.", back_home_kb())
+    await edit_or_replace(callback.message, "🆕 <b>Новинки</b>\n\nРаздел скоро будет доступен.", back_home_kb())
     await callback.answer()
 
 
@@ -3359,7 +3359,7 @@ async def consultant(callback: CallbackQuery):
         [InlineKeyboardButton(text="🔎 Подобрать аромат", callback_data="search")],
         [InlineKeyboardButton(text="← Главное меню", callback_data="home")],
     ])
-    await edit_or_replace(callback.message, "👤 <b>Консультант PARFERA</b>\n\nЕсли нужна помощь с выбором аромата — напишите консультанту <b>@Parfera</b>.\n\nОн поможет подобрать аромат под ваш вкус, задачу и бюджет.", kb)
+    await edit_or_replace(callback.message, "👤 <b>Консультант PARFERA</b>\n\nНе знаете, что выбрать? Напишите <b>@Parfera</b> — поможем подобрать аромат под ваш вкус и бюджет.", kb)
     await callback.answer()
 
 
