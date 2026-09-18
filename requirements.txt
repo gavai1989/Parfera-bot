@@ -1,6 +1,0 @@
-aiogram>=3.20,<4
-openai>=1.109,<2
-python-dotenv>=1.1,<2
-pytest>=8,<9
-aiohttp>=3.9,<4
-Pillow>=10,<12
