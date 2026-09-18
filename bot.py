@@ -119,7 +119,7 @@ HIDDEN_VARIANT_MARKERS = (
     "cosm", "cosmetic", "shampoo", "conditioner", "hand wash", "hand cream",
     "soap", "hair", "bath", "shower", "lotion", "cream", "balm", "gel",
     "candle", "diffuser", "home fragrance", "mini", "male minis", "female minis",
-    "set ", "gift set", "набор",
+    "set ", "gift set", "набор", "парфюм для волос", "парфюм для тела", "для волос", "для тела",
 )
 
 def variant_is_client_friendly(p):
@@ -1883,7 +1883,79 @@ def _name_token_score(query_token: str, product_token: str) -> float:
     return best
 
 
-def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
+
+BRAND_GENERIC_WORDS = {"parfums", "parfum", "perfume", "parfyum", "collection", "the", "la", "de", "of", "by", "and"}
+SEARCH_TOKEN_ALIASES = {"lav":"love", "gibiskus":"hibiscus", "eksklyuziv":"exclusif", "ekskluziv":"exclusif"}
+SEARCH_FILLER_WORDS = {
+    "parfum", "parfums", "perfume", "perfumes", "parfyum", "parfyumy", "парфюм", "парфюмы",
+    "духи", "дух", "аромат", "ароматы", "аромата", "парфюмерия",
+    "парфюмерный", "парфюмерная", "туалетная", "вода", "купить", "цена",
+    "цены", "отзывы", "отзыв", "ноты", "оригинал", "оригинальные",
+    "оригинальный", "фрагрантика", "fragrantica", "fragrance", "аналог",
+    "аналоги", "похожий", "похожие", "похожее", "пахнет", "чем", "как",
+    "состав", "мужской", "мужская", "мужское", "женский", "женская",
+    "женское", "мужчин", "женщин", "распив", "пробник", "тестер",
+}
+
+@lru_cache(maxsize=1)
+def _build_search_v2_indexes():
+    literal, canonical, by_brand = {}, {}, {}
+    for p in FAST_SEARCH_GROUPS_ALL:
+        if not variant_is_client_friendly(p):
+            continue
+        s = norm(p.get("name", ""))
+        bkey = BRAND_FOR_ID.get(p.get("id"), "")
+        brand = norm(BRAND_DISPLAY.get(bkey, bkey))
+        if brand:
+            s = re.sub(rf"^\s*{re.escape(brand)}\s*", " ", s, flags=re.I)
+        s = re.sub(r"\b\d+(?:[.,]\d+)?\s*ml\b", " ", s, flags=re.I)
+        s = re.sub(r"\s*\((?:m|w|u)\)", " ", s, flags=re.I)
+        s = re.sub(r"\b(?:eau\s+de\s+parfum|eau\s+de\s+toilette|extrait\s+de\s+parfum|parfum|parfume|perfume|cologne|edp|edt|extrait|парфюм|парфюмерная\s+вода|туалетная\s+вода|духи)\b", " ", s, flags=re.I)
+        s = re.sub(r"\btester\b|\bпробник\b", " ", s, flags=re.I)
+        s = re.sub(r"\s+", " ", s).strip(" -·")
+        toks = [x for x in re.findall(r"[a-zа-яё0-9]+", s.translate(RU_TO_EN)) if x not in SEARCH_FILLER_WORDS and len(x)>1]
+        if not toks: continue
+        key=tuple(toks)
+        literal.setdefault(key,[]).append(p)
+        ckey=tuple(_search_token_canon(x) for x in toks)
+        canonical.setdefault(ckey,[]).append(p)
+        by_brand.setdefault(bkey,[]).append((p,toks,ckey))
+    return literal, canonical, by_brand
+
+def _search_token_canon(token: str) -> str:
+    s=SEARCH_TOKEN_ALIASES.get(str(token or "").lower(),str(token or "").lower())
+    s=s.replace("ph","f").replace("th","t").replace("z","s").replace("c","k").replace("q","k")
+    if s.endswith("e") and not s.endswith("ee") and len(s)>=4: s += "e"
+    return s
+
+def _explicit_brand_v2(query: str):
+    nq=normalize_ai_query(query).translate(RU_TO_EN)
+    toks=re.findall(r"[a-z0-9]+",nq)
+    found=[]
+    for bk in BRAND_KEYS:
+        label=norm(BRAND_DISPLAY.get(bk,bk)).translate(RU_TO_EN)
+        bt=tuple(re.findall(r"[a-z0-9]+",label))
+        if not bt or len(bt)>len(toks): continue
+        if len(bt)==1 and bt[0] in BRAND_GENERIC_WORDS: continue
+        for i in range(len(toks)-len(bt)+1):
+            if tuple(toks[i:i+len(bt)])==bt:
+                found.append((len(bt),bk,i,i+len(bt))); break
+    if not found: return None,toks
+    _,bk,i,j=max(found)
+    return bk,toks[:i]+toks[j:]
+
+def _query_tokens_v2(query: str, brand_key=None):
+    nq=normalize_ai_query(query).translate(RU_TO_EN)
+    toks=re.findall(r"[a-z0-9]+",nq)
+    if brand_key:
+        label=norm(BRAND_DISPLAY.get(brand_key,brand_key)).translate(RU_TO_EN)
+        bt=tuple(re.findall(r"[a-z0-9]+",label))
+        for i in range(len(toks)-len(bt)+1):
+            if tuple(toks[i:i+len(bt)])==bt:
+                toks=toks[:i]+toks[i+len(bt):]; break
+    return [SEARCH_TOKEN_ALIASES.get(t,t) for t in toks if t not in SEARCH_FILLER_WORDS]
+
+def _v53_fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
     """Universal local perfume search for the ENTIRE catalog.
 
     Flow: detect an explicitly written brand -> hard-filter to that brand ->
@@ -2024,6 +2096,50 @@ def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
     threshold = best - (16 if resolved_brand else 12)
     return [p for score, p in scored if score >= threshold][:max(1, min(limit, 100))]
 
+
+
+def fast_ai_name_search(query: str, limit: int = 12) -> List[dict]:
+    raw=str(query or "").strip()
+    if not raw: return []
+    literal, canonical, by_brand = _build_search_v2_indexes()
+    brand_key,_ = _explicit_brand_v2(raw)
+    q_tokens=_query_tokens_v2(raw,brand_key)
+    if not q_tokens or len(q_tokens)>7: return []
+    qkey=tuple(q_tokens)
+    has_cyr=bool(re.search(r"[а-яё]",raw,re.I))
+    if brand_key:
+        rows=by_brand.get(brand_key,[])
+        exact=[p for p,t,c in rows if tuple(t)==qkey]
+        if exact: return exact[:max(1,min(limit,100))]
+        cq=tuple(_search_token_canon(t) for t in q_tokens)
+        near=[p for p,t,c in rows if c==cq]
+        if near: return near[:max(1,min(limit,100))]
+        scored=[]
+        for p,t,c in rows:
+            if len(t)!=len(q_tokens): continue
+            sims=[_fragrance_token_score(a,b) for a,b in zip(q_tokens,t)]
+            if sims and min(sims)>=0.90: scored.append((sum(sims)/len(sims),p))
+        if scored:
+            scored.sort(key=lambda x:(-x[0],ai_fragrance_title(x[1]).lower()))
+            best=scored[0][0]
+            return [p for s,p in scored if s>=best-0.02][:max(1,min(limit,100))]
+    exact=literal.get(qkey,[])
+    if exact:
+        if has_cyr:
+            cq=tuple(_search_token_canon(t) for t in q_tokens)
+            extra=canonical.get(cq,[])
+            out=[]; seen=set()
+            for p in list(exact)+list(extra):
+                gk=group_key(p)
+                if gk not in seen: seen.add(gk); out.append(p)
+            return out[:max(1,min(limit,100))]
+        return exact[:max(1,min(limit,100))]
+    cq=tuple(_search_token_canon(t) for t in q_tokens)
+    near=canonical.get(cq,[])
+    if near: return near[:max(1,min(limit,100))]
+    try: fuzzy=_v53_fast_ai_name_search(raw,limit=limit)
+    except Exception: fuzzy=[]
+    return [p for p in fuzzy if variant_is_client_friendly(p)][:max(1,min(limit,100))]
 
 def fast_ai_response(query: str, candidates: List[dict]) -> str:
     lines = ["💬 <b>PARFERA AI</b>", "", f"Нашёл варианты по запросу «{html.escape(query)}»:", ""]
@@ -2251,8 +2367,8 @@ dp = Dispatcher()
 
 
 def home_kb():
-    # Smart selection is temporarily hidden. Regular catalog search remains the main path.
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 PARFERA AI — подобрать аромат", callback_data="ai_start")],
         [InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog"),
          InlineKeyboardButton(text="🔎 Поиск", callback_data="search")],
         [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart"),
@@ -2684,7 +2800,7 @@ async def send_product(message, p, brand_id=None, brand_page=0, gender=None):
     await message.answer(text, reply_markup=kb)
 
 
-HOME_TEXT = "<b>PARFERA</b>\n\nНишевая оригинальная парфюмерия.\n\n💬 <b>Просто напишите название бренда или аромата.</b>\nНапример: «Versace Eros», «Erba Pura» или «Шанель Шанс»."
+HOME_TEXT = "<b>PARFERA</b>\n\nНишевая парфюмерия и персональный подбор.\n\n💬 <b>Просто напишите, какой аромат вы ищете.</b>\nНапример: «женский сладкий до 7000», «Versace Eros 100 мл» или «что-нибудь похожее на Erba Pura»."
 MAIN_IMAGE = os.path.join("images", "parfera_ai_main.jpg")
 
 
