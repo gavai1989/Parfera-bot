@@ -1,19 +1,71 @@
-PARFERA Telegram Shop — AI catalog build, 12.09.2026
+# Рыбацкий Трофей — Telegram bot MVP
 
-Catalog source: актуальный клиентский прайс PARFERA, загруженный 12.09.2026.
-Rows: 25,610.
-Prices are taken directly from the uploaded client price list in RUB.
+Telegram-бот принимает фотографию с рыбалки и с помощью OpenAI GPT Image 1.5
+добавляет на неё реалистичную пойманную рыбу.
 
-Files:
-- bot.py — Telegram bot with PARFERA AI
-- catalog.json — current catalog
-- requirements.txt — dependencies
-- images/ — available product images
+## Главный принцип
 
-Environment variables:
-PARFERA_BOT_TOKEN
-PARFERA_OPENAI_API_KEY
-PARFERA_OPENAI_MODEL (optional, default gpt-5.6-luna)
+Бот **редактирует исходную фотографию, а не пересоздаёт сцену**.
 
-Start:
-python bot.py
+Максимально сохраняются:
+- люди, лица, внешность, позы и пропорции;
+- руки, ноги и всё видимое тело;
+- одежда и её детали;
+- фон и всё окружение;
+- предметы, ландшафт, вода, лодка и т. д.;
+- исходное освещение, перспектива и камера;
+- исходное кадрирование и соотношение сторон.
+
+AI должен изменить только то, что необходимо для реалистичного добавления рыбы.
+
+## Формат результата
+
+Размер результата выбирается по ориентации исходного фото:
+- вертикальное → `1024x1536`;
+- горизонтальное → `1536x1024`;
+- квадратное → `1024x1024`.
+
+Используется:
+- модель: `gpt-image-1.5`;
+- качество: `low`;
+- `input_fidelity=high`.
+
+## MVP
+
+- Telegram-бот;
+- пользователь просто отправляет фотографию;
+- бот автоматически выбирает рыбу из 10 видов;
+- бот автоматически выбирает наиболее подходящего человека;
+- бот добавляет одну реалистичную рыбу;
+- результат возвращается в Telegram;
+- база данных, платежи и другие функции в MVP не используются.
+
+## Локальный запуск
+
+1. Установите Python.
+2. Установите зависимости:
+   `pip install -r requirements.txt`
+3. Скопируйте `.env.example` в `.env`.
+4. Заполните `TELEGRAM_BOT_TOKEN` и `OPENAI_API_KEY`.
+5. Запустите:
+   `python bot.py`
+
+Секретные ключи не коммитить в GitHub.
+
+## Render
+
+Для production используется webhook.
+
+Переменные окружения:
+- `BOT_MODE=webhook`
+- `PUBLIC_BASE_URL=https://<имя-сервиса>.onrender.com`
+- `WEBHOOK_SECRET=<длинная случайная строка>`
+- `TELEGRAM_BOT_TOKEN=<токен BotFather>`
+- `OPENAI_API_KEY=<ключ OpenAI>`
+
+Render автоматически передаёт `PORT`.
+
+Проверка сервиса:
+`/health`
+
+Для локальной разработки можно использовать `BOT_MODE=polling`.
