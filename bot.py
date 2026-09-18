@@ -2251,8 +2251,8 @@ dp = Dispatcher()
 
 
 def home_kb():
+    # Smart selection is temporarily hidden. Regular catalog search remains the main path.
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 PARFERA AI — подобрать аромат", callback_data="ai_start")],
         [InlineKeyboardButton(text="🛍 Каталог", callback_data="catalog"),
          InlineKeyboardButton(text="🔎 Поиск", callback_data="search")],
         [InlineKeyboardButton(text="🛒 Корзина", callback_data="cart"),
@@ -2684,7 +2684,7 @@ async def send_product(message, p, brand_id=None, brand_page=0, gender=None):
     await message.answer(text, reply_markup=kb)
 
 
-HOME_TEXT = "<b>PARFERA</b>\n\nНишевая парфюмерия и персональный подбор.\n\n💬 <b>Просто напишите, какой аромат вы ищете.</b>\nНапример: «женский сладкий до 7000», «Versace Eros 100 мл» или «что-нибудь похожее на Erba Pura»."
+HOME_TEXT = "<b>PARFERA</b>\n\nНишевая оригинальная парфюмерия.\n\n💬 <b>Просто напишите название бренда или аромата.</b>\nНапример: «Versace Eros», «Erba Pura» или «Шанель Шанс»."
 MAIN_IMAGE = os.path.join("images", "parfera_ai_main.jpg")
 
 
